@@ -1,12 +1,25 @@
 this file will tell you how to configure environment
 
 1. firstly pull the imagine 
+docker pull pcafrica/mk
 
 
 2. login ssh from your environment
 
+do this if you want to develop and commit code
+otherwise you can just create a simple container to run the code
 
 3. create a container adding ssh agent 
+
+eval "$(ssh-agent -s)"
+ssh-add # Follow prompts to add your key(s) or just ssh-add for using the default one
+
+docker run -it --name nmpde-env \
+  -v $HOME/polimi/amsc24-25:/home/jellyfish/shared-folder \
+  -v $SSH_AUTH_SOCK:/ssh-agent \
+  -e SSH_AUTH_SOCK=/ssh-agent \
+  -v $HOME/.gitconfig:/root/.gitconfig \
+  pcafrica/mk /bin/bash
 
 
 4. work inside the docker container

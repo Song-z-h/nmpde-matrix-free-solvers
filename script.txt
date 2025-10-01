@@ -1,0 +1,12 @@
+this file will tell you how to configure environment
+
+1. firstly pull the imagine 
+
+
+2. login ssh from your environment
+
+
+3. create a container adding ssh agent 
+
+
+4. work inside the docker container

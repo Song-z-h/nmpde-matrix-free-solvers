@@ -51,7 +51,7 @@ public:
   static constexpr unsigned int dim = 2;
   static constexpr unsigned int fe_degree = 1;
   using Number = double;
-  using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as your solution/rhs
+  using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
 
   // Diffusion coefficient.
   // In deal.ii, functions are implemented by deriving the dealii::Function
@@ -209,13 +209,6 @@ public:
     void vmult(VectorType &dst, const VectorType &src) const
     {
       dst = 0;
-      VectorType src_copy = src;
-      if (constraints_ptr != nullptr)
-    constraints_ptr->set_zero(src_copy);
-      // MatrixFree::cell_loop will call local_apply for ranges of cells.
-      /*mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply,
-                    const_cast<MatrixFreeLaplaceOperator *>(this),
-                    dst, src);*/
       mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
 
       // ensure constrained DoFs remain correct (if required)
@@ -223,8 +216,7 @@ public:
         this->constraints_ptr->distribute(dst);
     }
 
-    // compute diagonal (optional helper)
-    // In MatrixFreeLaplaceOperator (header):
+    // compute diagonal (optional helper) to do
     void local_compute_diagonal(const MatrixFree<dim, Number> &data,
                                 VectorType &dst,
                                 const std::pair<unsigned int, unsigned int> &range) const
@@ -324,23 +316,6 @@ public:
         fe_eval.distribute_local_to_global(dst);
       }
     }
-
-    // local_compute_diagonal: similar to local_apply but applied to unit vectors.
-    static void local_compute_diagonal(const MatrixFree<dim, double> &data,
-                                       VectorType &dst,
-                                       const VectorType &src,
-                                       const std::pair<unsigned int, unsigned int> &range,
-                                       MatrixFreeLaplaceOperator *op)
-    {
-
-      // The default MatrixFreeTools::compute_diagonal will call this with src being
-      // a unit vector over local DoFs. The simplest pattern is to reuse local_apply
-      // semantics: apply operator to unit basis columns and extract diagonal entries.
-      // We can implement a simplified variant by asking FEEvaluation to read_dof_values(src)
-      // and then pick the i-th entry result. But MatrixFreeTools orchestrates the unit-vector pattern;
-      // here we implement same structure as local_apply, then after distribute_local_to_global,
-      // we pick the appropriate diagonal entry from dst (MatrixFreeTools expects this).
-    }
   };
 
   // Constructor.
@@ -435,7 +410,7 @@ protected:
 
   // Matrix-free pieces
   std::shared_ptr<MatrixFree<dim, Number>> mf_storage;
-  MatrixFreeLaplaceOperator<dim, fe_degree, double> mf_operator;
+  MatrixFreeLaplaceOperator<dim, fe_degree, Number> mf_operator;
 
   typename MatrixFree<dim, Number>::AdditionalData additional_data;
 };

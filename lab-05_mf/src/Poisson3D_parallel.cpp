@@ -76,22 +76,6 @@ void Poisson3DParallel::setup()
 
     pcout << "  Initializing the sparsity pattern" << std::endl;
 
-    // To initialize the sparsity pattern, we use Trilinos' class, that manages
-    // some of the inter-process communication.
-    TrilinosWrappers::SparsityPattern sparsity(locally_owned_dofs,
-                                               MPI_COMM_WORLD);
-    DoFTools::make_sparsity_pattern(dof_handler, sparsity);
-
-    // After initialization, we need to call compress, so that all process
-    // retrieve the information they need for the rows they own (i.e. the rows
-    // corresponding to locally owned DoFs).
-    sparsity.compress();
-
-    // Then, we use the sparsity pattern to initialize the system matrix. Since
-    // the sparsity pattern is partitioned by row, so will the matrix.
-    // pcout << "  Initializing the system matrix" << std::endl;
-    // system_matrix.reinit(sparsity);
-
     // Finally, we initialize the right-hand side and solution vectors.
     pcout << "  Initializing the system right-hand side" << std::endl;
     system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
@@ -101,25 +85,7 @@ void Poisson3DParallel::setup()
 
   // matrix-free settings
   {
-    // setting up D boundaries
-    constraints.clear();
-    constraints.reinit(dof_handler.locally_owned_dofs());
-
-    MappingFE<dim> mapping_bc(*fe);
-
-    // apply Dirichlet BCs on *all* boundary faces
-    std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-    for (const auto &id : mesh.get_boundary_ids())
-      boundary_functions[id] = &function_g;
-
-    // Interpolate all boundary IDs into constraints
-    VectorTools::interpolate_boundary_values(mapping_bc,
-                                             dof_handler,
-                                             boundary_functions,
-                                             constraints);
-
-    constraints.close();
-
+    
     additional_data.tasks_parallel_scheme =
         MatrixFree<dim, double>::AdditionalData::none; // single-threaded, keep MPI
     additional_data.mapping_update_flags =
@@ -270,7 +236,7 @@ void Poisson3DParallel::solve()
   solution = 0;
 
   solver.solve(mf_operator, solution, system_rhs, PreconditionIdentity());
-  constraints.distribute(solution);
+  //constraints.distribute(solution);
 
   pcout << "  CG iterations: " << solver_control.last_step() << std::endl;
 }

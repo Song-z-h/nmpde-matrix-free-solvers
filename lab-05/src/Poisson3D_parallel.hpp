@@ -6,6 +6,8 @@
 
 #include <deal.II/distributed/fully_distributed_tria.h>
 
+#include <deal.II/lac/affine_constraints.h>
+
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
@@ -236,6 +238,10 @@ protected:
 
   // DoFs owned by current process.
   IndexSet locally_owned_dofs;
+  IndexSet locally_relevant_dofs;
+
+  AffineConstraints<double> constraints;
+
 };
 
 #endif

@@ -187,11 +187,13 @@ public:
     void initialize(std::shared_ptr<MatrixFree<dim, Number>> mf_ptr)
     {
       this->mf = mf_ptr;
-
+      this->data = mf_ptr; 
       // allocate temporaries (MatrixFree sizes things according to dof layout)
       const auto &partitioner = mf_ptr->get_vector_partitioner();
       tmp_dst.reinit(partitioner);
       tmp_src.reinit(partitioner);
+
+      this->mf->initialize_dof_vector(src_ghost, 0);  // ghosted
     }
 
     // Let the operator know coefficients (copied by value here)
@@ -204,16 +206,20 @@ public:
       reaction = react;
     }
     void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
-
     // vmult: compute dst = A * src
     void vmult(VectorType &dst, const VectorType &src) const
     {
-      dst = 0;
-      mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
+      src_ghost = src;
+      src_ghost.update_ghost_values();
 
-      // ensure constrained DoFs remain correct (if required)
-      if (this->constraints_ptr != nullptr)
-        this->constraints_ptr->distribute(dst);
+    //if (constraints_ptr)
+      //  constraints_ptr->set_zero(src_ghost);
+
+      dst = 0;
+      mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src_ghost);
+      dst.compress(VectorOperation::add); // Communicate additions to ghost entries
+      //if (constraints_ptr)
+        //constraints_ptr->set_zero(dst);
     }
 
     // compute diagonal (optional helper) to do
@@ -221,7 +227,7 @@ public:
                                 VectorType &dst,
                                 const std::pair<unsigned int, unsigned int> &range) const
     {
-      FEEvaluation<dim, -1, 0, 0, Number> fe_eval(data); // No gradients needed for diagonal
+     /* FEEvaluation<dim, -1, 0, 0, Number> fe_eval(data); // No gradients needed for diagonal
 
       for (unsigned int cell = range.first; cell < range.second; ++cell)
       {
@@ -236,8 +242,8 @@ public:
           fe_eval.submit_value(1.0, q); // Reaction term dominates diagonal
         }
         fe_eval.integrate(EvaluationFlags::values);
-        fe_eval.distribute_local_to_global(dst);
-      }
+        fe_eval.distribute_local_to_global(dst); 
+      }*/
     }
 
   private:
@@ -246,12 +252,16 @@ public:
     const AffineConstraints<Number> *constraints_ptr;
     DiffusionCoefficient diffusion;
     ReactionCoefficient reaction;
+    mutable VectorType src_ghost;
 
     virtual void apply_add(
         LinearAlgebra::distributed::Vector<number> &dst,
         const LinearAlgebra::distributed::Vector<number> &src) const override
     {
+      //src_ghost = src;
+      //src_ghost.update_ghost_values();
       this->data->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
+      //dst.compress(VectorOperation::add);
     };
 
     // In Poisson3D_parallel.hpp, inside the MatrixFreeLaplaceOperator class
@@ -264,7 +274,8 @@ public:
       // The FEEvaluation helper class provides the logic for evaluating FE
       // functions on multiple cells at once (vectorization).
      
-      FEEvaluation<dim, fe_degree> fe_eval(data);
+      //FEEvaluation<dim, fe_degree> fe_eval(data);
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> fe_eval(data);
 
       for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
       {
@@ -395,6 +406,7 @@ protected:
 
   // DoFs owned by current process.
   IndexSet locally_owned_dofs;
+  IndexSet locally_relevant_dofs;
 
   // matrix free components
 

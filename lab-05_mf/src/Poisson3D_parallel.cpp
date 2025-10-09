@@ -65,6 +65,8 @@ void Poisson3DParallel::setup()
     // initializing linear algebra classes.
     locally_owned_dofs = dof_handler.locally_owned_dofs();
 
+    DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
+
     pcout << "  Number of DoFs = " << dof_handler.n_dofs() << std::endl;
   }
 
@@ -76,16 +78,33 @@ void Poisson3DParallel::setup()
 
     pcout << "  Initializing the sparsity pattern" << std::endl;
 
+    // Build constraints here
+    pcout << "Building the constraints" << std::endl;
+    constraints.clear();
+    constraints.reinit(locally_owned_dofs);
+    DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+
+    std::map<types::boundary_id, const Function<dim> *> boundary_functions;
+    for (const auto &id : mesh.get_boundary_ids())
+      boundary_functions[id] = &function_g;
+
+    MappingFE<dim> mapping(*fe);
+    VectorTools::interpolate_boundary_values(mapping,
+                                             dof_handler,
+                                             boundary_functions,
+                                             constraints);
+    constraints.close();
+
     // Finally, we initialize the right-hand side and solution vectors.
-    pcout << "  Initializing the system right-hand side" << std::endl;
-    system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
-    pcout << "  Initializing the solution vector" << std::endl;
-    solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);
+    // pcout << "  Initializing the system right-hand side" << std::endl;
+    // system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
+    // pcout << "  Initializing the solution vector" << std::endl;
+    // solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);
   }
 
   // matrix-free settings
   {
-    
+
     additional_data.tasks_parallel_scheme =
         MatrixFree<dim, double>::AdditionalData::none; // single-threaded, keep MPI
     additional_data.mapping_update_flags =
@@ -96,6 +115,12 @@ void Poisson3DParallel::setup()
     mf_storage->reinit(mapping_local, dof_handler, constraints,
                        QGaussSimplex<dim>(fe->degree + 1),
                        additional_data);
+
+    // Initialize vectors using MatrixFree's partitioner for compatibility
+    pcout << "  Initializing the system right-hand side" << std::endl;
+    mf_storage->initialize_dof_vector(system_rhs);
+    pcout << "  Initializing the solution vector" << std::endl;
+    mf_storage->initialize_dof_vector(solution);
 
     // Initialize our matrix-free operator
     mf_operator.initialize(mf_storage);
@@ -174,7 +199,7 @@ void Poisson3DParallel::assemble()
     cell->get_dof_indices(dof_indices);
 
     // system_matrix.add(dof_indices, cell_matrix);
-    system_rhs.add(dof_indices, cell_rhs);
+    constraints.distribute_local_to_global(cell_rhs, dof_indices, system_rhs);
   }
 
   // Each process might have written to some rows it does not own (for instance,
@@ -183,42 +208,6 @@ void Poisson3DParallel::assemble()
   // information: the compress method allows to do this.
   // system_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);
-
-  // Boundary conditions.
-  /*{
-
-    std::map<types::global_dof_index, double> boundary_values;
-
-    std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-
-    for (unsigned int i = 0; i < 6; ++i)
-      boundary_functions[i] = &function_g;
-
-    VectorTools::interpolate_boundary_values(dof_handler,
-                                            boundary_functions,
-                                            boundary_values);
-
-    MatrixTools::apply_boundary_values(
-      boundary_values, system_matrix, solution, system_rhs, true);
-    }*/
-
-  // Apply constraints: distribute constrained values into system_rhs (homogeneous BC -> zero values)
-  // Build constraints again to call distribute (or keep the constraints object around)
-  constraints.reinit(locally_owned_dofs);
-  //DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-
-  // apply Dirichlet BCs on *all* boundary faces
-  std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-  for (const auto &id : mesh.get_boundary_ids())
-    boundary_functions[id] = &function_g;
-
-  // Interpolate all boundary IDs into constraints
-  VectorTools::interpolate_boundary_values(mapping_assemble,
-                                           dof_handler,
-                                           boundary_functions,
-                                           constraints);
-  constraints.close();
-  constraints.distribute(system_rhs);
 }
 
 void Poisson3DParallel::solve()
@@ -226,8 +215,8 @@ void Poisson3DParallel::solve()
   pcout << "===============================================" << std::endl;
 
   pcout << "Solving with matrix-free operator (CG + Jacobi precond)" << std::endl;
-
-  SolverControl solver_control(10000, 1e-6 * system_rhs.l2_norm());
+  constraints.set_zero(system_rhs);
+  SolverControl solver_control(10000, 1e-8 * system_rhs.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
   PreconditionIdentity preconditioner;
@@ -236,9 +225,10 @@ void Poisson3DParallel::solve()
   solution = 0;
 
   solver.solve(mf_operator, solution, system_rhs, PreconditionIdentity());
-  //constraints.distribute(solution);
+  constraints.distribute(solution);
 
-  pcout << "  CG iterations: " << solver_control.last_step() << std::endl;
+  pcout << "  CG iterations: " << solver_control.last_step() <<
+   "cg residuals: " << solver_control.last_value() << std::endl;
 }
 
 void Poisson3DParallel::output() const
@@ -298,11 +288,15 @@ Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
   // quadrature formula with one node more than what we used in assembly.
   const QGaussSimplex<dim> quadrature_error(r + 2);
 
+  VectorType ghosted_solution(locally_owned_dofs,
+                              locally_relevant_dofs,
+                              MPI_COMM_WORLD);
+  ghosted_solution = solution;
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell(mesh.n_active_cells());
   VectorTools::integrate_difference(mapping,
                                     dof_handler,
-                                    solution,
+                                    ghosted_solution,
                                     ExactSolution(),
                                     error_per_cell,
                                     quadrature_error,

@@ -56,7 +56,8 @@ public:
   // Diffusion coefficient.
   // In deal.ii, functions are implemented by deriving the dealii::Function
   // class, which provides an interface for the computation of function values
-  // and their derivatives.
+  // and their derivatives
+  template <int dim>
   class DiffusionCoefficient : public Function<dim>
   {
   public:
@@ -67,14 +68,22 @@ public:
 
     // Evaluation.
     virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
+    value(const Point<dim> &p,
+          const unsigned int component = 0) const override
+    {
+      return value<double>(p, component);
+    }
+
+    template <typename number>
+    number value(const Point<dim, number> & /*p*/,
+                 const unsigned int /*component*/ = 0) const
     {
       return 1.0;
     }
   };
 
   // Reaction coefficient.
+  template <int dim>
   class ReactionCoefficient : public Function<dim>
   {
   public:
@@ -84,9 +93,17 @@ public:
     }
 
     // Evaluation.
+
     virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
+    value(const Point<dim> &p,
+          const unsigned int component = 0) const override
+    {
+      return value<double>(p, component);
+    }
+
+    template <typename number>
+    number value(const Point<dim, number> & /*p*/,
+                 const unsigned int /*component*/ = 0) const
     {
       return 1.0;
     }
@@ -172,8 +189,11 @@ public:
   public:
     using value_type = number;
 
-    MatrixFreeLaplaceOperator() {};
-
+    MatrixFreeLaplaceOperator()
+        : MatrixFreeOperators::Base<dim,
+                                    LinearAlgebra::distributed::Vector<number>>()
+    {
+    }
     void clear() override
     {
       MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<number>>::
@@ -184,27 +204,39 @@ public:
 
     };
 
+    void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
+                              const ReactionCoefficient<dim> &reaction_function)
+    {
+      const unsigned int n_cells = this->data->n_cell_batches();
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(*this->data);
+
+      diffusion_coefficient.reinit(n_cells, phi.n_q_points);
+      reaction_coefficient.reinit(n_cells, phi.n_q_points);
+      for (unsigned int cell = 0; cell < n_cells; ++cell)
+      {
+        phi.reinit(cell);
+        for (const unsigned int q : phi.quadrature_point_indices())
+        {
+          diffusion_coefficient(cell, q) =
+              diffusion_function.value(phi.quadrature_point(q));
+          reaction_coefficient(cell, q) =
+              reaction_function.value(phi.quadrature_point(q));
+        }
+      }
+    }
+
     void initialize(std::shared_ptr<MatrixFree<dim, Number>> mf_ptr)
     {
       this->mf = mf_ptr;
-      this->data = mf_ptr; 
+      this->data = mf_ptr;
       // allocate temporaries (MatrixFree sizes things according to dof layout)
       const auto &partitioner = mf_ptr->get_vector_partitioner();
       tmp_dst.reinit(partitioner);
       tmp_src.reinit(partitioner);
 
-      this->mf->initialize_dof_vector(src_ghost, 0);  // ghosted
+      this->mf->initialize_dof_vector(src_ghost, 0); // ghosted
     }
 
-    // Let the operator know coefficients (copied by value here)
-    void set_diffusion(const DiffusionCoefficient &diff)
-    {
-      diffusion = diff;
-    }
-    void set_reaction(const ReactionCoefficient &react)
-    {
-      reaction = react;
-    }
     void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
     // vmult: compute dst = A * src
     void vmult(VectorType &dst, const VectorType &src) const
@@ -212,57 +244,55 @@ public:
       src_ghost = src;
       src_ghost.update_ghost_values();
 
-    //if (constraints_ptr)
-      //  constraints_ptr->set_zero(src_ghost);
+      if (constraints_ptr)
+        constraints_ptr->set_zero(src_ghost);
 
       dst = 0;
       mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src_ghost);
       dst.compress(VectorOperation::add); // Communicate additions to ghost entries
-      //if (constraints_ptr)
-        //constraints_ptr->set_zero(dst);
+      if (constraints_ptr)
+        constraints_ptr->set_zero(dst);
     }
 
     // compute diagonal (optional helper) to do
-    void local_compute_diagonal(const MatrixFree<dim, Number> &data,
-                                VectorType &dst,
-                                const std::pair<unsigned int, unsigned int> &range) const
+    void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe_eval) const
     {
-     /* FEEvaluation<dim, -1, 0, 0, Number> fe_eval(data); // No gradients needed for diagonal
+      /* FEEvaluation<dim, -1, 0, 0, Number> fe_eval(data); // No gradients needed for diagonal
 
-      for (unsigned int cell = range.first; cell < range.second; ++cell)
-      {
-        fe_eval.reinit(cell);
+       for (unsigned int cell = range.first; cell < range.second; ++cell)
+       {
+         fe_eval.reinit(cell);
 
-        // For diagonal: evaluate operator on unit DoF vectors (MatrixFreeTools handles looping over DoFs)
-        // Simplified: reuse local_apply logic but extract diagonal (see deal.II examples for full impl)
-        // Stub: zero for now, or implement basis evaluation
-        for (unsigned int q = 0; q < fe_eval.n_q_points; ++q)
-        {
-          // Placeholder: submit identity-like for diagonal ~1 (adjust for actual op)
-          fe_eval.submit_value(1.0, q); // Reaction term dominates diagonal
-        }
-        fe_eval.integrate(EvaluationFlags::values);
-        fe_eval.distribute_local_to_global(dst); 
-      }*/
+         // For diagonal: evaluate operator on unit DoF vectors (MatrixFreeTools handles looping over DoFs)
+         // Simplified: reuse local_apply logic but extract diagonal (see deal.II examples for full impl)
+         // Stub: zero for now, or implement basis evaluation
+         for (unsigned int q = 0; q < fe_eval.n_q_points; ++q)
+         {
+           // Placeholder: submit identity-like for diagonal ~1 (adjust for actual op)
+           fe_eval.submit_value(1.0, q); // Reaction term dominates diagonal
+         }
+         fe_eval.integrate(EvaluationFlags::values);
+         fe_eval.distribute_local_to_global(dst);
+       }*/
     }
 
   private:
     std::shared_ptr<MatrixFree<dim, Number>> mf;
     mutable VectorType tmp_dst, tmp_src;
     const AffineConstraints<Number> *constraints_ptr;
-    DiffusionCoefficient diffusion;
-    ReactionCoefficient reaction;
+    // DiffusionCoefficient diffusion;
+    // ReactionCoefficient reaction;
+    Table<2, VectorizedArray<number>> diffusion_coefficient;
+    Table<2, VectorizedArray<number>> reaction_coefficient;
+
     mutable VectorType src_ghost;
 
     virtual void apply_add(
         LinearAlgebra::distributed::Vector<number> &dst,
         const LinearAlgebra::distributed::Vector<number> &src) const override
     {
-      //src_ghost = src;
-      //src_ghost.update_ghost_values();
       this->data->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
-      //dst.compress(VectorOperation::add);
-    };
+    }
 
     // In Poisson3D_parallel.hpp, inside the MatrixFreeLaplaceOperator class
 
@@ -273,21 +303,28 @@ public:
     {
       // The FEEvaluation helper class provides the logic for evaluating FE
       // functions on multiple cells at once (vectorization).
-     
-      //FEEvaluation<dim, fe_degree> fe_eval(data);
+
+      // FEEvaluation<dim, fe_degree> fe_eval(data);
       FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> fe_eval(data);
 
       for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
       {
+
+        AssertDimension(diffusion_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(diffusion_coefficient.size(1), fe_eval.n_q_points);
+
+        AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(reaction_coefficient.size(1), fe_eval.n_q_points);
+
         fe_eval.reinit(cell);
         fe_eval.read_dof_values(src);
         fe_eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
-        for (unsigned int q = 0; q < fe_eval.n_q_points; ++q)
+        for (const unsigned int q : fe_eval.quadrature_point_indices())
         {
           // Since the diffusion and reaction coefficients are constant (1.0),
           // we can create a vectorized constant directly.
-          const Point<dim, VectorizedArray<Number>> p_vect = fe_eval.quadrature_point(q);
+          /*const Point<dim, VectorizedArray<Number>> p_vect = fe_eval.quadrature_point(q);
           VectorizedArray<Number> D = 0.0;
           for (unsigned int v = 0; v < VectorizedArray<Number>::size(); ++v)
           {
@@ -315,10 +352,10 @@ public:
           Tensor<1, dim, VectorizedArray<Number>> diff_flux;
           for (unsigned int d = 0; d < dim; ++d)
             diff_flux[d] = D * grad_u[d];
-
+          */
           // Submit the contributions for the diffusion and reaction terms.
-          fe_eval.submit_gradient(diff_flux, q);
-          fe_eval.submit_value(R * u_val, q);
+          fe_eval.submit_gradient(diffusion_coefficient(cell, q) * fe_eval.get_gradient(q), q);
+          fe_eval.submit_value(reaction_coefficient(cell, q) * fe_eval.get_value(q), q);
         }
 
         // Integrate the submitted values and distribute the results
@@ -367,10 +404,13 @@ protected:
   const unsigned int mpi_rank;
 
   // Diffusion coefficient.
-  DiffusionCoefficient diffusion_coefficient;
+  // DiffusionCoefficient diffusion_coefficient;
 
   // Reaction coefficient.
-  ReactionCoefficient reaction_coefficient;
+  // ReactionCoefficient reaction_coefficient;
+
+  DiffusionCoefficient<dim> diffusion_coefficient;
+  ReactionCoefficient<dim> reaction_coefficient;
 
   // Forcing term.
   ForcingTerm forcing_term;

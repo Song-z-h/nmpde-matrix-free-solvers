@@ -124,8 +124,9 @@ void Poisson3DParallel::setup()
 
     // Initialize our matrix-free operator
     mf_operator.initialize(mf_storage);
-    mf_operator.set_diffusion(diffusion_coefficient);
-    mf_operator.set_reaction(reaction_coefficient);
+    // mf_operator.set_diffusion(diffusion_coefficient);
+    // mf_operator.set_reaction(reaction_coefficient);
+    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
     mf_operator.set_constraints(constraints);
 
     pcout << "Setup completed" << std::endl;
@@ -137,7 +138,6 @@ void Poisson3DParallel::assemble()
   pcout << "===============================================" << std::endl;
 
   pcout << "Assembling RHS (kept FEValues style for simplicity)" << std::endl;
-
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
   const unsigned int n_q = quadrature->size();
 
@@ -173,31 +173,13 @@ void Poisson3DParallel::assemble()
     {
       for (unsigned int i = 0; i < dofs_per_cell; ++i)
       {
-        /*for (unsigned int j = 0; j < dofs_per_cell; ++j)
-          {
-            // Diffusion term.
-            cell_matrix(i, j) += diffusion_coefficient.value(
-                                  fe_values.quadrature_point(q)) // mu(x)
-                                * fe_values.shape_grad(i, q)     // (I)
-                                * fe_values.shape_grad(j, q)     // (II)
-                                * fe_values.JxW(q);              // (III)
 
-            // Reaction term.
-            cell_matrix(i, j) +=
-              reaction_coefficient.value(
-                fe_values.quadrature_point(q)) * // sigma(x)
-              fe_values.shape_value(i, q) *      // phi_i
-              fe_values.shape_value(j, q) *      // phi_j
-              fe_values.JxW(q);                  // dx
-          }
-          */
         cell_rhs(i) += forcing_term.value(fe_values.quadrature_point(q)) *
                        fe_values.shape_value(i, q) * fe_values.JxW(q);
       }
     }
 
     cell->get_dof_indices(dof_indices);
-
     // system_matrix.add(dof_indices, cell_matrix);
     constraints.distribute_local_to_global(cell_rhs, dof_indices, system_rhs);
   }
@@ -219,7 +201,7 @@ void Poisson3DParallel::solve()
   SolverControl solver_control(10000, 1e-8 * system_rhs.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
-  PreconditionIdentity preconditioner;
+  // PreconditionIdentity preconditioner;
 
   // initial guess zero
   solution = 0;
@@ -227,8 +209,7 @@ void Poisson3DParallel::solve()
   solver.solve(mf_operator, solution, system_rhs, PreconditionIdentity());
   constraints.distribute(solution);
 
-  pcout << "  CG iterations: " << solver_control.last_step() <<
-   "cg residuals: " << solver_control.last_value() << std::endl;
+  pcout << "  CG iterations: " << solver_control.last_step() << "cg residuals: " << solver_control.last_value() << std::endl;
 }
 
 void Poisson3DParallel::output() const
@@ -246,9 +227,10 @@ void Poisson3DParallel::output() const
                             locally_relevant_dofs,
                             MPI_COMM_WORLD);
 
+  solution_ghost = solution;
+  solution_ghost.update_ghost_values();  // FIXED: Update ghosts
   // This performs the necessary communication so that the locally relevant DoFs
   // are received from other processes and stored inside solution_ghost.
-  solution_ghost = solution;
 
   // Then, we build and fill the DataOut class as usual.
   DataOut<dim> data_out;
@@ -292,6 +274,7 @@ Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
                               locally_relevant_dofs,
                               MPI_COMM_WORLD);
   ghosted_solution = solution;
+  ghosted_solution.update_ghost_values();  // FIXED: Update ghosts
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell(mesh.n_active_cells());
   VectorTools::integrate_difference(mapping,

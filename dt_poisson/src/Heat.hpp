@@ -210,8 +210,8 @@ public:
        , time(0.0)
        , mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD))
        , mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
-       , mesh(MPI_COMM_WORLD)
        , pcout(std::cout, mpi_rank == 0)
+       , mesh(MPI_COMM_WORLD)
   {}
 
   // Initialization.
@@ -245,19 +245,6 @@ protected:
   void
   output(const unsigned int &time_step) const;
 
-  // MPI parallel. /////////////////////////////////////////////////////////////
-
-  // Number of MPI processes.
-  const unsigned int mpi_size;
-
-  // This MPI process.
-  const unsigned int mpi_rank;
-
-  //number of mesh points
-  const unsigned int N;
-
-  // Parallel output stream.
-  ConditionalOStream pcout;
 
   // Problem definition. ///////////////////////////////////////////////////////
 
@@ -284,13 +271,12 @@ protected:
   // Initial condition.
   FunctionU0 u_0;
 
-  // Final time.
-  const double T;
-
-  //current time
-  double time;
 
   // Discretization. ///////////////////////////////////////////////////////////
+
+
+  //number of mesh points
+  const unsigned int N;
 
   // Mesh file name.
   const std::string mesh_file_name;
@@ -298,11 +284,31 @@ protected:
   // Polynomial degree.
   const unsigned int r;
 
-  // Time step.
-  const double deltat;
 
-  // Theta parameter of the theta method.
-  const double theta;
+  // Final time.
+  const double T;
+  
+    // Time step.
+    const double deltat;
+    
+    // Theta parameter of the theta method.
+    const double theta;
+
+  //current time
+  double time;
+
+
+  // MPI parallel. /////////////////////////////////////////////////////////////
+
+  // Number of MPI processes.
+  const unsigned int mpi_size;
+
+  // This MPI process.
+  const unsigned int mpi_rank;
+
+  // Parallel output stream.
+  ConditionalOStream pcout;
+
 
   // Mesh.
   parallel::fullydistributed::Triangulation<dim> mesh;

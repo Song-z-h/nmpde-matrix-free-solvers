@@ -196,9 +196,9 @@ void Poisson3DParallel::solve()
 {
   pcout << "===============================================" << std::endl;
 
-  pcout << "Solving with matrix-free operator (CG + Jacobi precond)" << std::endl;
+  pcout << "Solving with matrix-free operator (CG precond)" << std::endl;
   constraints.set_zero(system_rhs);
-  SolverControl solver_control(10000, 1e-8 * system_rhs.l2_norm());
+  SolverControl solver_control(20000, 1e-12 * system_rhs.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
   // PreconditionIdentity preconditioner;

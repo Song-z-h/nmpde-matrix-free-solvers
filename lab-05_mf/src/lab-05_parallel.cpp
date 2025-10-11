@@ -13,15 +13,23 @@ int main(int argc, char *argv[])
   // is destroyed. It also initializes several other libraries bundled with
   // dealii (e.g. p4est, PETSc, ...).
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
-  const unsigned int degree = 1;
   const unsigned int mpi_rank =
       Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-
-  std::vector<std::string> mesh_file_names = {
-      "../mesh/mesh-square-5.msh",
-      "../mesh/mesh-square-10.msh",
-      "../mesh/mesh-square-20.msh",
-      "../mesh/mesh-square-40.msh"};
+  std::vector<std::string> mesh_file_names;
+    if(Poisson3DParallel::dim == 3){
+      mesh_file_names = {
+        "../mesh/mesh-cube-5.msh",
+        "../mesh/mesh-cube-10.msh",
+        "../mesh/mesh-cube-20.msh",
+        "../mesh/mesh-cube-40.msh"};
+      }
+    if(Poisson3DParallel::dim == 2){
+      mesh_file_names = {
+        "../mesh/mesh-square-5.msh",
+        "../mesh/mesh-square-10.msh",
+        "../mesh/mesh-square-20.msh",
+        "../mesh/mesh-square-40.msh"};
+    }
   std::vector<int> mesh_Ns = {5, 10, 20, 40};
 
   ConvergenceTable table;
@@ -31,7 +39,7 @@ int main(int argc, char *argv[])
 
   for (unsigned int i = 0; i < mesh_Ns.size(); i++)
   {
-    Poisson3DParallel problem(mesh_file_names[i], degree);
+    Poisson3DParallel problem(mesh_file_names[i]);
     problem.setup();
     problem.assemble();
     problem.solve();

@@ -49,7 +49,7 @@ class Poisson3DParallel
 public:
   // Physical dimension (1D, 2D, 3D)
   static constexpr unsigned int dim = 2;
-  static constexpr unsigned int fe_degree = 1;
+  static constexpr unsigned int fe_degree = 2;
   using Number = double;
   using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
 
@@ -277,17 +277,17 @@ public:
     // vmult: compute dst = A * src
     void vmult(VectorType &dst, const VectorType &src) const
     {
-      //src_ghost = src;
+      src_ghost = src;
       //src_ghost.update_ghost_values();
 
-      //if (constraints_ptr)
-        //constraints_ptr->set_zero(src_ghost);
+      if (constraints_ptr)
+        constraints_ptr->set_zero(src_ghost);
 
       dst = 0;
-      mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
+      mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src_ghost);
       //dst.compress(VectorOperation::add); // Communicate additions to ghost entries
-      //if (constraints_ptr)
-        //constraints_ptr->set_zero(dst);
+      if (constraints_ptr)
+        constraints_ptr->set_zero(dst);
     }
     //0.0250 1.00 4.0874e-03 2.01 6.1929e-01 0.99 with set_zero
     //0.0250 1.00 4.2253e-03 1.98 6.1764e-01 0.99 without set_zero

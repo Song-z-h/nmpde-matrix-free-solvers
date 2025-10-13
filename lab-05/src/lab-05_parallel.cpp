@@ -16,13 +16,24 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank =
       Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 
-  const unsigned int degree = 1;
+  const unsigned int degree = 2;
 
-  std::vector<std::string> mesh_file_names = {
-      "../mesh/mesh-square-5.msh",
-      "../mesh/mesh-square-10.msh",
-      "../mesh/mesh-square-20.msh",
-      "../mesh/mesh-square-40.msh"};
+  std::vector<std::string> mesh_file_names;
+
+   if(Poisson3DParallel::dim == 3){
+      mesh_file_names = {
+        "../mesh/mesh-cube-5.msh",
+        "../mesh/mesh-cube-10.msh",
+        "../mesh/mesh-cube-20.msh",
+        "../mesh/mesh-cube-40.msh"};
+      }
+    if(Poisson3DParallel::dim == 2){
+      mesh_file_names = {
+        "../mesh/mesh-square-5.msh",
+        "../mesh/mesh-square-10.msh",
+        "../mesh/mesh-square-20.msh",
+        "../mesh/mesh-square-40.msh"};
+    }
   std::vector<int> mesh_Ns = {5, 10, 20, 40};
 
   ConvergenceTable table;

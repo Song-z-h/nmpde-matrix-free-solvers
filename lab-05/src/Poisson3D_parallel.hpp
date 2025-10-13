@@ -46,7 +46,7 @@ class Poisson3DParallel
 {
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 2;
+  static constexpr unsigned int dim = 3;
 
   // Diffusion coefficient.
   // In deal.ii, functions are implemented by deriving the dealii::Function
@@ -57,7 +57,8 @@ public:
   public:
     // Constructor.
     DiffusionCoefficient()
-    {}
+    {
+    }
 
     // Evaluation.
     virtual double
@@ -74,7 +75,8 @@ public:
   public:
     // Constructor.
     ReactionCoefficient()
-    {}
+    {
+    }
 
     // Evaluation.
     virtual double
@@ -91,24 +93,38 @@ public:
   public:
     // Constructor.
     ForcingTerm()
-    {}
+    {
+    }
 
     // Evaluation.
     virtual double
-    value(const Point<dim> & p,
+    value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      return (20.0 * M_PI * M_PI + 1.0) * sin(2.0 * M_PI * p[0]) * sin(4.0 * M_PI * p[1]);
+      // for 2d mesh
+      if (dim == 2)
+      {
+        return (20.0 * M_PI * M_PI + 1.0) * sin(2.0 * M_PI * p[0]) * sin(4.0 * M_PI * p[1]);
+      }
+      // for 3d mesh
+      if (dim == 3)
+      {
+        return (29.0 * M_PI * M_PI + 1.0) *
+               std::sin(2.0 * M_PI * p[0]) *
+               std::sin(4.0 * M_PI * p[1]) *
+               std::sin(3.0 * M_PI * p[2]);
+      }
     }
   };
 
-   // Dirichlet boundary conditions.
+  // Dirichlet boundary conditions.
   class FunctionG : public Function<dim>
   {
   public:
     // Constructor.
     FunctionG()
-    {}
+    {
+    }
 
     // Evaluation.
     virtual double
@@ -125,14 +141,21 @@ public:
   public:
     // Constructor.
     ExactSolution()
-    {}
+    {
+    }
 
     // Evaluation.
     virtual double
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      return sin(2.0 * M_PI * p[0]) * sin(4.0 * M_PI * p[1]);
+      if (dim == 2)
+        return sin(2.0 * M_PI * p[0]) * sin(4.0 * M_PI * p[1]);
+      // 3d
+      if (dim == 3)
+        return std::sin(2.0 * M_PI * p[0]) *
+               std::sin(4.0 * M_PI * p[1]) *
+               std::sin(3.0 * M_PI * p[2]);
     }
 
     // Gradient evaluation.
@@ -146,25 +169,36 @@ public:
     {
       Tensor<1, dim> result;
 
-      // Points 3 and 4.
-      result[0] = 2 * M_PI * cos(2 * M_PI * p[0]) * sin(4 * M_PI * p[1]);
+      // Points 3 and 4.   for 2d
+      if (dim == 2)
+      {
+        result[0] = 2 * M_PI * cos(2 * M_PI * p[0]) * sin(4 * M_PI * p[1]);
+        result[1] = 4 * M_PI * sin(2 * M_PI * p[0]) * cos(4 * M_PI * p[1]);
+      }
 
-      result[1] =  4 * M_PI * sin(2 * M_PI * p[0]) * cos(4 * M_PI * p[1]);
+      // for 3d
+      if (dim == 3)
+      {
 
+        result[0] = 2.0 * M_PI * std::cos(2.0 * M_PI * p[0]) *
+                    std::sin(4.0 * M_PI * p[1]) *
+                    std::sin(3.0 * M_PI * p[2]);
+        result[1] = 4.0 * M_PI * std::sin(2.0 * M_PI * p[0]) *
+                    std::cos(4.0 * M_PI * p[1]) *
+                    std::sin(3.0 * M_PI * p[2]);
+        result[2] = 3.0 * M_PI * std::sin(2.0 * M_PI * p[0]) *
+                    std::sin(4.0 * M_PI * p[1]) *
+                    std::cos(3.0 * M_PI * p[2]);
+      }
       return result;
     }
   };
 
-
   // Constructor.
   Poisson3DParallel(const std::string &mesh_file_name_, const unsigned int &r_)
-    : mesh_file_name(mesh_file_name_)
-    , r(r_)
-    , mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD))
-    , mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
-    , mesh(MPI_COMM_WORLD)
-    , pcout(std::cout, mpi_rank == 0)
-  {}
+      : mesh_file_name(mesh_file_name_), r(r_), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
+  {
+  }
 
   // Initialization.
   void
@@ -183,7 +217,6 @@ public:
   output() const;
 
   double compute_error(const VectorTools::NormType &norm_type) const;
-
 
 protected:
   // Path to the mesh file.
@@ -241,7 +274,6 @@ protected:
   IndexSet locally_relevant_dofs;
 
   AffineConstraints<double> constraints;
-
 };
 
 #endif

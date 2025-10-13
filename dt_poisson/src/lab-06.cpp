@@ -28,7 +28,7 @@ main(int argc, char *argv[])
 
   for (unsigned int i = 0; i < deltat_vals.size(); ++i)
     {
-      Heat problem(50, "", degree, T, deltat_vals[i], theta);
+      Heat problem(30, "", degree, T, deltat_vals[i], theta);
       
       problem.setup();
       problem.solve();

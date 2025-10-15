@@ -81,7 +81,7 @@ void Poisson3DParallel::setup()
     // Build constraints here
     pcout << "Building the constraints" << std::endl;
     constraints.clear();
-    constraints.reinit(locally_owned_dofs);
+    //constraints.reinit(locally_owned_dofs);
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;

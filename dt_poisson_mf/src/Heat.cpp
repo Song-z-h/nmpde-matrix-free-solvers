@@ -120,26 +120,39 @@ void Heat::setup()
 
   // Initialize the linear system.
   {
-    pcout << "Initializing the linear system" << std::endl;
+    pcout << "Initializing the matrix-free system" << std::endl;
 
-    pcout << "  Initializing the sparsity pattern" << std::endl;
-
-    TrilinosWrappers::SparsityPattern sparsity(locally_owned_dofs,
-                                               MPI_COMM_WORLD);
-    DoFTools::make_sparsity_pattern(dof_handler, sparsity);
-    sparsity.compress();
-
-    pcout << "  Initializing the matrices" << std::endl;
-    mass_matrix.reinit(sparsity);
-    stiffness_matrix.reinit(sparsity);
-    lhs_matrix.reinit(sparsity);
-    rhs_matrix.reinit(sparsity);
+    additional_data.tasks_parallel_scheme = 
+      MatrixFree<dim, NUMBER>::AdditionalData::none;
+      additional_data.mapping_update_flags = 
+        (update_gradients | update_values | update_JxW_values | update_quadrature_points);
+      
+      MappingFE<dim> mapping_local(*fe);
+      mf_storage = std::make_shared<MatrixFree<dim, NUMBER>>();
+      if(dim > 1)
+      mf_storage->reinit(mapping_local, dof_handler, constraints,
+                  QGaussSimplex<dim>(r + 1), additional_data);
+      if(dim == 1)
+      mf_storage->reinit(mapping_local, dof_handler, constraints,
+                  QGauss<dim>(r + 1), additional_data);
 
     pcout << "  Initializing the system right-hand side" << std::endl;
-    system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
+    mf_storage->initialize_dof_vector(system_rhs);
     pcout << "  Initializing the solution vector" << std::endl;
-    solution_owned.reinit(locally_owned_dofs, MPI_COMM_WORLD);
-    solution.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+    mf_storage->initialize_dof_vector(solution);
+    pcout << "  Initializing the solution owned vector" << std::endl;
+    mf_storage->initialize_dof_vector(solution_owned);
+
+    // Initialize our matrix-free operator
+
+    mf_operator_lhs.initialize(mf_storage);
+    mf_operator_lhs.evaluate_coefficient(mu, b, k);
+    mf_operator_lhs.set_constraints(constraints);
+
+    mf_operator_rhs.initialize(mf_storage);
+    mf_operator_rhs.evaluate_coefficient(mu, b, k);
+    mf_operator_rhs.set_constraints(constraints);
+    pcout << "Setup completed" << std::endl;
   }
 }
 

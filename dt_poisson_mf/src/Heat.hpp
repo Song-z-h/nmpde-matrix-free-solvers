@@ -38,6 +38,8 @@
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
 
+#include <deal.II/lac/precondition.h>
+
 #include <fstream>
 #include <iostream>
 
@@ -241,9 +243,7 @@ public:
        const double &T_,
        const double &deltat_,
        const double &theta_)
-      : N(N_), mesh_file_name(mesh_file_name_), r(r_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD)
-      ,mf_operator_lhs(deltat, theta, true)
-      ,mf_operator_rhs(deltat, theta, false)
+      : N(N_), mesh_file_name(mesh_file_name_), r(r_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD), mf_operator_lhs(deltat, theta, true), mf_operator_rhs(deltat, theta, false)
   {
   }
 
@@ -265,16 +265,10 @@ public:
     TimeStepOperator()
         : MatrixFreeOperators::Base<dim, VectorType>() {}
 
-    
-  TimeStepOperator(double deltat_, double theta_, bool is_lhs_)
-    : deltat(deltat_), theta(theta_), is_lhs(is_lhs_) {}
+    TimeStepOperator(double deltat_, double theta_, bool is_lhs_)
+        : deltat(deltat_), theta(theta_), is_lhs(is_lhs_) {}
 
-    void clear() override
-    {
-      MatrixFreeOperators::Base < dim, VectorType::
-                                           clear();
-    }
-
+    // must implement
     virtual void compute_diagonal() override
     {
     }
@@ -283,16 +277,50 @@ public:
                               const AdvectionCoefficient<dim> &advection_function,
                               const ReactionCoefficient<dim> &reaction_function)
     {
+      const unsigned int n_cells = this->data->n_cell_batches();
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, NUMBER> phi(*this->data);
+
+      diffusion_coefficient.reinit(n_cells, phi.n_q_points);
+      advection_coefficient.reinit(n_cells, phi.n_q_points);
+      reaction_coefficient.reinit(n_cells, phi.n_q_points);
+
+      for (unsigned int cell = 0; cell < n_cells; ++cell)
+      {
+        phi.reinit(cell);
+        for (const unsigned int q : phi.quadrature_point_indices())
+        {
+          diffusion_coefficient(cell, q) =
+              diffusion_function.value(phi.quadrature_point(q));
+          // advection_coefficient(cell, q) =
+          //   advection_function.value(phi.quadrature_point(q));
+          reaction_coefficient(cell, q) =
+              reaction_function.value(phi.quadrature_point(q));
+          Tensor<1, dim, VectorizedArray<number>> b_loc;
+
+          for (unsigned int d = 0; d < dim; ++d)
+            b_loc[d] = advection_function.value(phi.quadrature_point(q), d);
+          advection_coefficient(cell, q) = b_loc;
+        }
+      }
     }
 
     void initialize(std::shared_ptr<MatrixFree<dim, number>> mf_ptr)
     {
+      this->data = mf_ptr;
     }
 
-    void set_constraints(const AffineConstraints<number> &c) {}
+    //void set_constraints(const AffineConstraints<number> &c) {}
 
     void vmult(VectorType &dst, const VectorType &src) const
     {
+      // src_ghost = src;
+      dst = 0;
+      this->data->cell_loop(&TimeStepOperator::local_apply, this, dst, src);
+    }
+
+    void vmult_add(VectorType &dst, const VectorType &src) const
+    {
+      this->apply_add(dst, src);
     }
 
     void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe_eval) const
@@ -300,12 +328,12 @@ public:
     }
 
   private:
-    std::shared_ptr<MatrixFree<dim, number>> mf;
     mutable VectorType tmp_dst, tmp_src;
-    const AffineConstraints<number> *constraints_ptr;
+    //const AffineConstraints<number> *constraints_ptr;
 
     Table<2, VectorizedArray<number>> diffusion_coefficient;
-    Table<2, VectorizedArray<number>> advection_coefficient;
+    Table<2, Tensor<1, dim, VectorizedArray<number>>> advection_coefficient;
+    // Table<2, VectorizedArray<number>> advection_coefficient;
     Table<2, VectorizedArray<number>> reaction_coefficient;
 
     const double deltat;
@@ -315,17 +343,53 @@ public:
     mutable VectorType src_ghost;
 
     virtual void apply_add(
-        LinearAlgebra::distributed::Vector<number> &dst,
-        const LinearAlgebra::distributed::Vector<number> &src) const override
+        VectorType &dst, const VectorType &src) const override
     {
+      this->data->cell_loop(&TimeStepOperator::local_apply, this, dst, src, false);
     }
-       void local_apply(const MatrixFree<dim, number> &data,
+    void local_apply(const MatrixFree<dim, number> &data,
                      VectorType &dst,
                      const VectorType &src,
                      const std::pair<unsigned int, unsigned int> &cell_range) const
     {
-    }
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(data);
+      const NUMBER factor_m = 1.0 / deltat;                    // mass matrix
+      const NUMBER factor_s = is_lhs ? theta : -(1.0 - theta); // stifness
+      for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
+      {
 
+        AssertDimension(diffusion_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(diffusion_coefficient.size(1), phi.n_q_points);
+
+        AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(reaction_coefficient.size(1), phi.n_q_points);
+
+        AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(advection_coefficient.size(1), phi.n_q_points);
+
+        phi.reinit(cell);
+        phi.read_dof_values(src);
+        phi.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+
+        for (const unsigned int q : phi.quadrature_point_indices())
+        {
+          const auto u = phi.get_value(q);
+          const auto grad_u = phi.get_gradient(q);
+
+          auto &b = advection_coefficient(cell, q);
+          const auto flux = b * u;
+          // Weak form terms: (1/Δt) u v ± θ (μ ∇u · ∇v - (b · ∇u) v + k u v)
+          phi.submit_value(factor_m * u + factor_s * reaction_coefficient(cell, q) * u, q);
+          phi.submit_gradient(factor_s * (diffusion_coefficient(cell, q) * grad_u - flux), q);
+
+          // Advection term: -θ (b · ∇u) v
+          // For dim=1, advection_coefficient(cell, q) is b[0] = x-1
+        }
+
+        phi.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
+        phi.distribute_local_to_global(dst);
+      }
+    }
   };
 
 protected:
@@ -458,9 +522,7 @@ protected:
   TimeStepOperator<dim, fe_degree, NUMBER> mf_operator_lhs;
   TimeStepOperator<dim, fe_degree, NUMBER> mf_operator_rhs;
 
-
   typename MatrixFree<dim, NUMBER>::AdditionalData additional_data;
-
 };
 
 #endif

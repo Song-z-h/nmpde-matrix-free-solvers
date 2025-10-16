@@ -5,7 +5,7 @@ void Heat::setup()
   pcout << "Initializing the mesh" << std::endl;
 
   Triangulation<dim> serial_hypercube_tria;
-  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N + 1, 0.0, 1.0, true);
+  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
 
   Triangulation<dim> serial_simplex_tria;
   if (dim == 1)
@@ -147,146 +147,12 @@ void Heat::setup()
 
     mf_operator_lhs.initialize(mf_storage);
     mf_operator_lhs.evaluate_coefficient(mu, b, k);
-    mf_operator_lhs.set_constraints(constraints);
+    //mf_operator_lhs.set_constraints(constraints);
 
     mf_operator_rhs.initialize(mf_storage);
     mf_operator_rhs.evaluate_coefficient(mu, b, k);
-    mf_operator_rhs.set_constraints(constraints);
+    //mf_operator_rhs.set_constraints(constraints);
     pcout << "Setup completed" << std::endl;
-  }
-}
-
-void Heat::assemble_matrices()
-{
-  pcout << "===============================================" << std::endl;
-  pcout << "Assembling the system matrices" << std::endl;
-
-  const unsigned int dofs_per_cell = fe->dofs_per_cell;
-  const unsigned int n_q = quadrature->size();
-
-  FEValues<dim> fe_values(*fe,
-                          *quadrature,
-                          update_values | update_gradients |
-                              update_quadrature_points | update_JxW_values);
-
-  FullMatrix<double> cell_mass_matrix(dofs_per_cell, dofs_per_cell);
-  FullMatrix<double> cell_stiffness_matrix(dofs_per_cell, dofs_per_cell);
-
-  std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
-
-  mass_matrix = 0.0;
-  stiffness_matrix = 0.0;
-
-  for (const auto &cell : dof_handler.active_cell_iterators())
-  {
-    if (!cell->is_locally_owned())
-      continue;
-
-    fe_values.reinit(cell);
-
-    cell_mass_matrix = 0.0;
-    cell_stiffness_matrix = 0.0;
-
-    for (unsigned int q = 0; q < n_q; ++q)
-    {
-      // Evaluate coefficients on this quadrature node.
-      const double mu_loc = mu.value(fe_values.quadrature_point(q));
-      const double k_loc = k.value(fe_values.quadrature_point(q));
-      // const double tau_loc = tau.value(fe_values.quadrature_point(q));
-      //const Tensor<1, dim> b_loc = b.value(fe_values.quadrature_point(q));
-
-      Vector<double> b_loc(dim);
-      //double b_value = b.value(fe_values.quadrature_point(q));
-      b.vector_value(fe_values.quadrature_point(q), b_loc);
-      Tensor<1, dim> advection_term_tensor;
-          for (unsigned int d = 0; d < dim; ++d)
-            advection_term_tensor[d] = b_loc[d];
-      for (unsigned int i = 0; i < dofs_per_cell; ++i)
-      {
-        for (unsigned int j = 0; j < dofs_per_cell; ++j)
-        {
-          cell_mass_matrix(i, j) += fe_values.shape_value(i, q) *
-                                    fe_values.shape_value(j, q) /
-                                    deltat * fe_values.JxW(q);
-          // difusion term
-          cell_stiffness_matrix(i, j) +=
-              mu_loc * // epsilon
-              fe_values.shape_grad(i, q) *
-              fe_values.shape_grad(j, q) *
-              fe_values.JxW(q);
-
-          // transport advection term
-          cell_stiffness_matrix(i, j) -=
-              scalar_product(advection_term_tensor,
-              fe_values.shape_grad(i, q)) * // Gradient on test function phi_i
-              fe_values.shape_value(j, q) *   // Value of trial function phi_j
-              fe_values.JxW(q);
-
-          // mid term
-          cell_stiffness_matrix(i, j) +=
-              k_loc *
-              fe_values.shape_value(i, q) *
-              fe_values.shape_value(j, q) *
-              fe_values.JxW(q);
-
-          // stabilization term for dominating advection term
-
-          /* cell_stiffness_matrix(i, j) +=
-           tau_loc * k_loc / deltat
-           * fe_values.shape_value(j, q)
-           * fe_values.shape_grad(i, q)[0]
-           * fe_values.JxW(q);
-
-           cell_mass_matrix(i, j) +=
-           k_loc * k_loc
-           * fe_values.shape_grad(i, q)
-           * fe_values.shape_grad(j, q)
-           * fe_values.JxW(q);
-           */
-        }
-      }
-    }
-
-    cell->get_dof_indices(dof_indices);
-
-   // mass_matrix.add(dof_indices, cell_mass_matrix);
-    //stiffness_matrix.add(dof_indices, cell_stiffness_matrix);
-
-
-    constraints.distribute_local_to_global(cell_mass_matrix,
-                                       dof_indices, mass_matrix);
-    constraints.distribute_local_to_global(cell_stiffness_matrix,
-                                       dof_indices, stiffness_matrix);
-  }
-
-  mass_matrix.compress(VectorOperation::add);
-  stiffness_matrix.compress(VectorOperation::add);
-
-  // We build the matrix on the left-hand side of the algebraic problem (the one
-  // that we'll invert at each timestep).
-  lhs_matrix.copy_from(mass_matrix);
-  lhs_matrix.add(theta, stiffness_matrix);
-
-  // We build the matrix on the right-hand side (the one that multiplies the old
-  // solution un).
-  rhs_matrix.copy_from(mass_matrix);
-  rhs_matrix.add(-(1.0 - theta), stiffness_matrix);
-
-  // Boundary conditions.
-  {
-    // We construct a map that stores, for each DoF corresponding to a Dirichlet
-    // condition, the corresponding value. E.g., if the Dirichlet condition is
-    // u_i = b, the map will contain the pair (i, b).
-    // std::map<types::global_dof_index, double> boundary_values;
-
-    // This object represents our boundary data as a real-valued function (that
-    // always evaluates to zero).
-
-    // Finally, we modify the linear system to apply the boundary conditions.
-    // This replaces the equations for the boundary DoFs with the corresponding
-    // u_i = 0 equations.
-    //MatrixTools::apply_boundary_values(
-      //  boundary_values, lhs_matrix, solution, system_rhs, true);
   }
 }
 
@@ -385,8 +251,8 @@ void Heat::assemble_rhs(const double &time)
   system_rhs.compress(VectorOperation::add);
 
   // Add the term that comes from the old solution.
-  rhs_matrix.vmult_add(system_rhs, solution_owned);
-
+  //rhs_matrix.vmult_add(system_rhs, solution_owned);
+  mf_operator_rhs.vmult_add(system_rhs,solution_owned); 
   /*for (const auto &entry : boundary_values)
     if (system_rhs.in_local_range(entry.first))
       system_rhs(entry.first) = entry.second;*/
@@ -394,16 +260,16 @@ void Heat::assemble_rhs(const double &time)
 
 void Heat::solve_time_step()
 {
-  SolverControl solver_control(10000, 1e-12 * system_rhs.l2_norm());
+  SolverControl solver_control(100000, 1e-10 * system_rhs.l2_norm());
 
-  SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
-  TrilinosWrappers::PreconditionILU preconditioner;
-  preconditioner.initialize(lhs_matrix);
-  solver.solve(lhs_matrix, solution_owned, system_rhs, preconditioner);
+  SolverGMRES<VectorType> solver(solver_control);
+  //TrilinosWrappers::PreconditionILU preconditioner;
+  //preconditioner.initialize(lhs_matrix);
+  solver.solve(mf_operator_lhs, solution_owned, system_rhs, PreconditionIdentity());
   constraints.distribute(solution_owned);
 
-  pcout << "  " << solver_control.last_step() << " GMES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMES residual " << std::endl;
+  pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
+  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 
   solution = solution_owned;
 }
@@ -413,10 +279,11 @@ void Heat::output(const unsigned int &time_step) const
 
    IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-  TrilinosWrappers::MPI::Vector solution_ghost(locally_owned_dofs,
+  VectorType solution_ghost(locally_owned_dofs,
                                                locally_relevant_dofs,
                                                MPI_COMM_WORLD);
   solution_ghost = solution;
+  solution_ghost.update_ghost_values();  // FIXED: Update ghosts
 
   DataOut<dim> data_out;
   data_out.add_data_vector(dof_handler, solution_ghost, "u");
@@ -434,7 +301,7 @@ void Heat::output(const unsigned int &time_step) const
 
 void Heat::solve()
 {
-  assemble_matrices();
+  //assemble_matrices();
 
   pcout << "===============================================" << std::endl;
 
@@ -484,10 +351,11 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell;
 
-   TrilinosWrappers::MPI::Vector ghosted_solution(locally_owned_dofs,
+  VectorType ghosted_solution(locally_owned_dofs,
                                                  locally_relevant_dofs,
                                                  MPI_COMM_WORLD);
   ghosted_solution = solution;
+  ghosted_solution.update_ghost_values();
 
 
   // Use a unique_ptr to hold the correct quadrature rule.

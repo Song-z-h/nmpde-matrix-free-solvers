@@ -16,7 +16,7 @@
 
     //const std::string  mesh_file_name = "../mesh/mesh-cube-20.msh";
     const unsigned int degree         = 2;
-    const unsigned int N = 120;
+    const unsigned int N = 300;
 
     const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 

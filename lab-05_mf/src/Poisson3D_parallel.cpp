@@ -127,7 +127,7 @@ void Poisson3DParallel::setup()
     // mf_operator.set_diffusion(diffusion_coefficient);
     // mf_operator.set_reaction(reaction_coefficient);
     mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
-    mf_operator.set_constraints(constraints);
+    //mf_operator.set_constraints(constraints);
 
     pcout << "Setup completed" << std::endl;
   }

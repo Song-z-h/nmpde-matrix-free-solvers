@@ -263,31 +263,31 @@ public:
 
     void initialize(std::shared_ptr<MatrixFree<dim, Number>> mf_ptr)
     {
-      this->mf = mf_ptr;
+      //this->mf = mf_ptr;
       this->data = mf_ptr;
       // allocate temporaries (MatrixFree sizes things according to dof layout)
-      const auto &partitioner = mf_ptr->get_vector_partitioner();
-      tmp_dst.reinit(partitioner);
-      tmp_src.reinit(partitioner);
+      //const auto &partitioner = mf_ptr->get_vector_partitioner();
+      //tmp_dst.reinit(partitioner);
+      //tmp_src.reinit(partitioner);
 
-      this->mf->initialize_dof_vector(src_ghost, 0); // ghosted
+      //this->data->initialize_dof_vector(src_ghost, 0); // ghosted
     }
 
-    void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
+    //void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
     // vmult: compute dst = A * src
     void vmult(VectorType &dst, const VectorType &src) const
     {
-      src_ghost = src;
+      // src_ghost = src;
       //src_ghost.update_ghost_values();
 
-      if (constraints_ptr)
-        constraints_ptr->set_zero(src_ghost);
+      //if (constraints_ptr)
+        //constraints_ptr->set_zero(src_ghost);
 
       dst = 0;
-      mf->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src_ghost);
+      this->data->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
       //dst.compress(VectorOperation::add); // Communicate additions to ghost entries
-      if (constraints_ptr)
-        constraints_ptr->set_zero(dst);
+      //if (constraints_ptr)
+        //constraints_ptr->set_zero(dst);
     }
     //0.0250 1.00 4.0874e-03 2.01 6.1929e-01 0.99 with set_zero
     //0.0250 1.00 4.2253e-03 1.98 6.1764e-01 0.99 without set_zero
@@ -315,9 +315,9 @@ public:
     }
 
   private:
-    std::shared_ptr<MatrixFree<dim, Number>> mf;
+    //std::shared_ptr<MatrixFree<dim, Number>> mf;
     mutable VectorType tmp_dst, tmp_src;
-    const AffineConstraints<Number> *constraints_ptr;
+    //const AffineConstraints<Number> *constraints_ptr;
     // DiffusionCoefficient diffusion;
     // ReactionCoefficient reaction;
     Table<2, VectorizedArray<number>> diffusion_coefficient;

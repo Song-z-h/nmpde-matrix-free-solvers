@@ -328,3 +328,30 @@ Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
   return error;
 
 }
+
+
+// ... existing code ...
+
+// Add this function implementation
+double Poisson3DParallel::get_memory_consumption() const
+{
+  // 1. Memory of the System Matrix (The biggest difference)
+  // memory_consumption() returns bytes. We convert to MB.
+  double memory_matrix = system_matrix.memory_consumption();
+
+  // 2. Memory of Vectors (Solution + RHS)
+  double memory_vectors = system_rhs.memory_consumption() + 
+                          solution.memory_consumption();
+
+  // 3. Memory of Mesh and DoFHandler
+  double memory_grid = mesh.memory_consumption() + 
+                       dof_handler.memory_consumption();
+
+  // Sum local memory
+  double local_memory = memory_matrix + memory_vectors + memory_grid;
+
+  // Sum across all MPI processes to get global memory usage
+  double global_memory = Utilities::MPI::sum(local_memory, MPI_COMM_WORLD);
+
+  return global_memory / 1024.0 / 1024.0; // Return in MB
+}

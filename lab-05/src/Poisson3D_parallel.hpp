@@ -218,6 +218,9 @@ public:
 
   double compute_error(const VectorTools::NormType &norm_type) const;
 
+  double get_memory_consumption() const;
+
+
 public:
   // Path to the mesh file.
   const std::string mesh_file_name;

@@ -35,6 +35,8 @@
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
 
+#include <deal.II/base/aligned_vector.h> 
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -48,7 +50,7 @@ class Poisson3DParallel
 {
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 2;
+  static constexpr unsigned int dim = 3;
   static constexpr unsigned int fe_degree = 2;
   using Number = double;
   using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
@@ -236,8 +238,39 @@ public:
           clear();
     }
 
-    virtual void compute_diagonal() override {
+    virtual void compute_diagonal() override
+    {
+      // this->inverse_diagonal_entries.reset(new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>());
+      // LinearAlgebra::distributed::Vector<number> &inverse_diagonal =
+      //   this->inverse_diagonal_entries->get_vector();
 
+      LinearAlgebra::distributed::Vector<number> diagonal;
+      this->data->initialize_dof_vector(diagonal); // partitioner-compatible init
+      diagonal = 0.0;
+
+      MatrixFreeTools::compute_diagonal(*this->data,
+                                        diagonal,
+                                        &MatrixFreeLaplaceOperator::local_compute_diagonal,
+                                        this);
+
+      this->set_constrained_entries_to_one(diagonal);
+      this->inverse_diagonal_entries.reset(
+          new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>(diagonal));
+
+      LinearAlgebra::distributed::Vector<number> &inv_vec =
+          this->inverse_diagonal_entries->get_vector();
+
+
+      for (unsigned int i = 0; i < inv_vec.local_size(); ++i)
+      {
+        const number v = inv_vec.local_element(i);
+        // safeguard: if diagonal entry extremely small, clamp to avoid blowup
+        if (std::abs(v) < 1e-16)
+          inv_vec.local_element(i) = static_cast<number>(1.0);
+        else
+          inv_vec.local_element(i) = static_cast<number>(1.0) / v;
+      }
+      inv_vec.compress(VectorOperation::insert);
     };
 
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
@@ -263,63 +296,77 @@ public:
 
     void initialize(std::shared_ptr<MatrixFree<dim, Number>> mf_ptr)
     {
-      //this->mf = mf_ptr;
-      this->data = mf_ptr;
+      // this->mf = mf_ptr;
+      MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>::initialize(mf_ptr);
+      //this->data = mf_ptr;
       // allocate temporaries (MatrixFree sizes things according to dof layout)
-      //const auto &partitioner = mf_ptr->get_vector_partitioner();
-      //tmp_dst.reinit(partitioner);
-      //tmp_src.reinit(partitioner);
+      // const auto &partitioner = mf_ptr->get_vector_partitioner();
+      // tmp_dst.reinit(partitioner);
+      // tmp_src.reinit(partitioner);
 
-      //this->data->initialize_dof_vector(src_ghost, 0); // ghosted
+      // this->data->initialize_dof_vector(src_ghost, 0); // ghosted
     }
 
-    //void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
-    // vmult: compute dst = A * src
+    // void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
+    //  vmult: compute dst = A * src
     void vmult(VectorType &dst, const VectorType &src) const
     {
       // src_ghost = src;
-      //src_ghost.update_ghost_values();
+      // src_ghost.update_ghost_values();
 
-      //if (constraints_ptr)
-        //constraints_ptr->set_zero(src_ghost);
+      // if (constraints_ptr)
+      // constraints_ptr->set_zero(src_ghost);
 
       dst = 0;
       this->data->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
-      //dst.compress(VectorOperation::add); // Communicate additions to ghost entries
-      //if (constraints_ptr)
-        //constraints_ptr->set_zero(dst);
+      // dst.compress(VectorOperation::add); // Communicate additions to ghost entries
+      // if (constraints_ptr)
+      // constraints_ptr->set_zero(dst);
     }
-    //0.0250 1.00 4.0874e-03 2.01 6.1929e-01 0.99 with set_zero
-    //0.0250 1.00 4.2253e-03 1.98 6.1764e-01 0.99 without set_zero
+    // 0.0250 1.00 4.0874e-03 2.01 6.1929e-01 0.99 with set_zero
+    // 0.0250 1.00 4.2253e-03 1.98 6.1764e-01 0.99 without set_zero
 
-    // compute diagonal (optional helper) to do
-    void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe_eval) const
+   void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree+1, 1, number> &fe) const
+{
+  
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  AlignedVector<VectorizedArray<number>> diagonal_values(dofs_per_cell);
+  for (unsigned int i = 0; i < dofs_per_cell; ++i)
+  {
+    for (unsigned int j = 0; j < dofs_per_cell; ++j)
+    fe.begin_dof_values()[j] = 0.0;
+    
+    fe.begin_dof_values()[i] = 1.0;
+    
+    fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+    
+    const unsigned int cell = fe.get_current_cell_index();
+    for (unsigned int q : fe.quadrature_point_indices())
     {
-      /* FEEvaluation<dim, -1, 0, 0, Number> fe_eval(data); // No gradients needed for diagonal
-
-       for (unsigned int cell = range.first; cell < range.second; ++cell)
-       {
-         fe_eval.reinit(cell);
-
-         // For diagonal: evaluate operator on unit DoF vectors (MatrixFreeTools handles looping over DoFs)
-         // Simplified: reuse local_apply logic but extract diagonal (see deal.II examples for full impl)
-         // Stub: zero for now, or implement basis evaluation
-         for (unsigned int q = 0; q < fe_eval.n_q_points; ++q)
-         {
-           // Placeholder: submit identity-like for diagonal ~1 (adjust for actual op)
-           fe_eval.submit_value(1.0, q); // Reaction term dominates diagonal
-         }
-         fe_eval.integrate(EvaluationFlags::values);
-         fe_eval.distribute_local_to_global(dst);
-       }*/
+      auto D = diffusion_coefficient(cell, q);
+      auto R = reaction_coefficient(cell, q);
+      
+      fe.submit_gradient(D * fe.get_gradient(q), q);
+      fe.submit_value(R * fe.get_value(q), q);
     }
+    
+    fe.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
+    
+    diagonal_values[i] = fe.begin_dof_values()[i];
+  }
+  
+  for (unsigned int i = 0; i < dofs_per_cell; ++i)
+  {
+    fe.begin_dof_values()[i] = diagonal_values[i];
+  }
+}
 
   private:
-    //std::shared_ptr<MatrixFree<dim, Number>> mf;
+    // std::shared_ptr<MatrixFree<dim, Number>> mf;
     mutable VectorType tmp_dst, tmp_src;
-    //const AffineConstraints<Number> *constraints_ptr;
-    // DiffusionCoefficient diffusion;
-    // ReactionCoefficient reaction;
+    // const AffineConstraints<Number> *constraints_ptr;
+    //  DiffusionCoefficient diffusion;
+    //  ReactionCoefficient reaction;
     Table<2, VectorizedArray<number>> diffusion_coefficient;
     Table<2, VectorizedArray<number>> reaction_coefficient;
 
@@ -503,6 +550,31 @@ protected:
   MatrixFreeLaplaceOperator<dim, fe_degree, Number> mf_operator;
 
   typename MatrixFree<dim, Number>::AdditionalData additional_data;
+
+  class DiagonalPreconditioner : public Subscriptor
+  {
+  public:
+    void initialize(const MatrixFree<dim> &matrix_free,
+                    MatrixFreeLaplaceOperator<dim, fe_degree, Number> &laplace_op) // Your matrix-free operator class
+    {
+      laplace_op.compute_diagonal();  // Fills with 1/diagonal elements
+
+      matrix_free.initialize_dof_vector(inverse_diagonal);
+      inverse_diagonal = laplace_op.get_matrix_diagonal_inverse()->get_vector(); 
+    }
+
+    void vmult(LinearAlgebra::distributed::Vector<double> &dst,
+               const LinearAlgebra::distributed::Vector<double> &src) const
+    {
+      dst = src;
+      dst.scale(inverse_diagonal); // Apply inverse diagonal element-wise
+    }
+
+  private:
+    LinearAlgebra::distributed::Vector<double> inverse_diagonal;
+  };
+
+  DiagonalPreconditioner preconditioner;
 };
 
 #endif

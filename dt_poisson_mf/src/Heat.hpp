@@ -306,7 +306,8 @@ public:
 
     void initialize(std::shared_ptr<MatrixFree<dim, number>> mf_ptr)
     {
-      this->data = mf_ptr;
+      //this->data = mf_ptr;
+      MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>::initialize(mf_ptr);
     }
 
     //void set_constraints(const AffineConstraints<number> &c) {}

@@ -42,7 +42,7 @@ using namespace dealii;
 /**
  * Class managing the differential problem.
  */
-class Poisson3DParallel
+class Poisson3DParallelMf
 {
 public:
   // Physical dimension (1D, 2D, 3D)
@@ -195,7 +195,7 @@ public:
   };
 
   // Constructor.
-  Poisson3DParallel(const std::string &mesh_file_name_, const unsigned int &r_)
+  Poisson3DParallelMf(const std::string &mesh_file_name_, const unsigned int &r_)
       : mesh_file_name(mesh_file_name_), r(r_), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
   {
   }

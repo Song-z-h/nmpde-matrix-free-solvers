@@ -1,25 +1,20 @@
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/timer.h>
-
 #include <fstream>
 #include <iostream>
 #include <vector>
+#include <deal.II/base/utilities.h> // Needed for System Memory stats
 
-#include "Poisson3D_parallel.hpp"
+#include "Poisson3D_parallel_mf.hpp"
 
-// Main function.
 int main(int argc, char *argv[])
 {
-  // This object calls MPI_Init when it is constructed, and MPI_Finalize when it
-  // is destroyed. It also initializes several other libraries bundled with
-  // dealii (e.g. p4est, PETSc, ...).
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
-  const unsigned int mpi_rank =
-      Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-  std::vector<std::string> mesh_file_names;
+  const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
-
-  if (Poisson3DParallel::dim == 3)
+  
+  std::vector<std::string> mesh_file_names;
+  if (Poisson3DParallelMf::dim == 3)
   {
     mesh_file_names = {
         "../mesh/mesh-cube-5.msh",
@@ -27,7 +22,7 @@ int main(int argc, char *argv[])
         "../mesh/mesh-cube-20.msh",
         "../mesh/mesh-cube-40.msh"};
   }
-  if (Poisson3DParallel::dim == 2)
+  if (Poisson3DParallelMf::dim == 2)
   {
     mesh_file_names = {
         "../mesh/mesh-square-5.msh",
@@ -37,10 +32,8 @@ int main(int argc, char *argv[])
   }
   std::vector<int> mesh_Ns = {5, 10, 20, 40};
 
-  // Initialize TimerOutput for summary output
   TimerOutput timer(MPI_COMM_WORLD, pcout, TimerOutput::summary, TimerOutput::wall_times);
 
-  // Individual Timer objects for each section
   Timer setup_timer(MPI_COMM_WORLD);
   Timer assemble_timer(MPI_COMM_WORLD);
   Timer solve_timer(MPI_COMM_WORLD);
@@ -49,18 +42,21 @@ int main(int argc, char *argv[])
 
   ConvergenceTable table;
 
-  std::ofstream convergence_file("convergence.csv");
+  std::ofstream convergence_file;
   if (mpi_rank == 0)
   {
-    convergence_file << "h,eL2,eH1,setup_time,assemble_time,solve_time,output_time,error_time" << std::endl;
+    convergence_file.open("convergence.csv");
+    // <--- NEW: Added "memory_MB" to header
+    convergence_file << "h,eL2,eH1,setup_time,assemble_time,solve_time,output_time,error_time,memory_MB" << std::endl;
   }
 
   for (unsigned int i = 0; i < mesh_Ns.size(); i++)
   {
-
     pcout << "Mesh size " << mesh_Ns[i] << std::endl;
 
-    Poisson3DParallel problem(mesh_file_names[i]);
+    // Ensure this constructor matches your .hpp (add 'degree' if you updated the constructor)
+    Poisson3DParallelMf problem(mesh_file_names[i]); 
+    
     double setup_time, assemble_time, solve_time, output_time, error_time;
 
     {
@@ -70,6 +66,21 @@ int main(int argc, char *argv[])
       setup_time = setup_timer.wall_time();
       setup_timer.stop();
     }
+
+    // ============================================================
+    // <--- NEW: MEASURE MEMORY HERE
+    // ============================================================
+    // 1. Get the precise size of the data structures (Matrix-Free storage + Vectors)
+    double precise_memory_mb = problem.get_memory_consumption();
+
+    // 2. (Optional) Get System Peak RSS for comparison
+    Utilities::System::MemoryStats stats;
+    Utilities::System::get_memory_stats(stats);
+    
+    pcout << "  > Precise Memory (MF + Vecs): " << precise_memory_mb << " MB" << std::endl;
+    pcout << "  > System Peak RSS: " << stats.VmHWM / 1024.0 << " MB" << std::endl;
+    // ============================================================
+
     {
       TimerOutput::Scope t(timer, "Assemble");
       assemble_timer.start();
@@ -102,19 +113,30 @@ int main(int argc, char *argv[])
       error_time = error_timer.wall_time();
       error_timer.stop();
     }
+    
     table.add_value("h", h);
     table.add_value("L2", error_L2);
     table.add_value("H1", error_H1);
+    table.add_value("Memory", precise_memory_mb); // Add to console table
 
     if (mpi_rank == 0)
     {
-      convergence_file << h << "," << error_L2 << "," << error_H1 << ","
-                       << setup_time << "," << assemble_time << "," << solve_time << ","
-                       << output_time << "," << error_time << std::endl;
+      // <--- NEW: Write memory to CSV
+      convergence_file << h << "," 
+                       << error_L2 << "," 
+                       << error_H1 << ","
+                       << setup_time << "," 
+                       << assemble_time << "," 
+                       << solve_time << ","
+                       << output_time << "," 
+                       << error_time << ","
+                       << precise_memory_mb << std::endl; 
     }
   }
+  
   if (mpi_rank == 0)
   {
+    convergence_file.close();
     table.evaluate_all_convergence_rates(ConvergenceTable::reduction_rate_log2);
     table.set_scientific("L2", true);
     table.set_scientific("H1", true);

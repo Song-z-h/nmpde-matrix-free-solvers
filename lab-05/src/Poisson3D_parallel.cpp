@@ -1,6 +1,6 @@
 #include "Poisson3D_parallel.hpp"
 
-void Poisson3DParallel::setup()
+void Poisson3DParallelMf::setup()
 {
   pcout << "===============================================" << std::endl;
 
@@ -124,7 +124,7 @@ void Poisson3DParallel::setup()
   }
 }
 
-void Poisson3DParallel::assemble()
+void Poisson3DParallelMf::assemble()
 {
   std::cout << "Rank " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)
           << " constraints size = " << constraints.n_constraints()
@@ -226,7 +226,7 @@ void Poisson3DParallel::assemble()
   }*/
 }
 
-void Poisson3DParallel::solve()
+void Poisson3DParallelMf::solve()
 {
   pcout << "===============================================" << std::endl;
 
@@ -237,18 +237,21 @@ void Poisson3DParallel::solve()
   // Trilinos linear algebra.
   SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
-  TrilinosWrappers::PreconditionSSOR preconditioner;
-  preconditioner.initialize(
-    system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
+  //TrilinosWrappers::PreconditionSSOR preconditioner;
+  //preconditioner.initialize(
+    //system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
   
+    TrilinosWrappers::PreconditionJacobi preconditioner;
+  preconditioner.initialize(system_matrix);
+
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
+  solver.solve(system_matrix, solution, system_rhs, preconditioner);
   constraints.distribute(solution);
 
   pcout << "  " << solver_control.last_step()  << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;
 }
 
-void Poisson3DParallel::output() const
+void Poisson3DParallelMf::output() const
 {
   pcout << "===============================================" << std::endl;
 
@@ -296,7 +299,7 @@ void Poisson3DParallel::output() const
 }
 
 double
-Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
+Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
 {
   FE_SimplexP<dim> fe_linear(1);
   MappingFE mapping(fe_linear);
@@ -333,7 +336,7 @@ Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
 // ... existing code ...
 
 // Add this function implementation
-double Poisson3DParallel::get_memory_consumption() const
+double Poisson3DParallelMf::get_memory_consumption() const
 {
   // 1. Memory of the System Matrix (The biggest difference)
   // memory_consumption() returns bytes. We convert to MB.

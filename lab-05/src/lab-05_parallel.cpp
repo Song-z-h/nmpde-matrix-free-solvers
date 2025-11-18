@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
   // Define file names and Ns
   const unsigned int degree = 2;
   std::vector<std::string> mesh_file_names;
-  if (Poisson3DParallel::dim == 3)
+  if (Poisson3DParallelMf::dim == 3)
   {
     mesh_file_names = {"../mesh/mesh-cube-5.msh", "../mesh/mesh-cube-10.msh", "../mesh/mesh-cube-20.msh", "../mesh/mesh-cube-40.msh"};
   }
@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     pcout << "Mesh refinement " << mesh_Ns[i] << std::endl;
 
     // 1. Create Problem
-    Poisson3DParallel problem(mesh_file_names[i], degree);
+    Poisson3DParallelMf problem(mesh_file_names[i], degree);
 
     double setup_time, assemble_time, solve_time, output_time, error_time;
 

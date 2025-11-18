@@ -46,7 +46,7 @@ using namespace dealii;
 /**
  * Class managing the differential problem.
  */
-class Poisson3DParallel
+class Poisson3DParallelMf
 {
 public:
   // Physical dimension (1D, 2D, 3D)
@@ -276,6 +276,7 @@ public:
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
                               const ReactionCoefficient<dim> &reaction_function)
     {
+      if (!this->data) return; // Safety check
       const unsigned int n_cells = this->data->n_cell_batches();
       FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(*this->data);
 
@@ -452,7 +453,7 @@ public:
   };
 
   // Constructor.
-  Poisson3DParallel(const std::string &mesh_file_name_)
+  Poisson3DParallelMf(const std::string &mesh_file_name_)
       : mesh_file_name(mesh_file_name_), r(fe_degree), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
   {
   }
@@ -474,6 +475,8 @@ public:
   output() const;
 
   double compute_error(const VectorTools::NormType &norm_type) const;
+
+  double get_memory_consumption() const;
 
 protected:
   // Path to the mesh file.

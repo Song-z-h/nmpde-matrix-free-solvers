@@ -1,6 +1,6 @@
-#include "Poisson3D_parallel.hpp"
+#include "Poisson3D_parallel_mf.hpp"
 
-void Poisson3DParallel::setup()
+void Poisson3DParallelMf::setup()
 {
   pcout << "===============================================" << std::endl;
 
@@ -123,12 +123,11 @@ void Poisson3DParallel::setup()
     mf_storage->initialize_dof_vector(solution);
 
     // Initialize our matrix-free operator
+   pcout << "  Initializing operator..." << std::endl;
     mf_operator.initialize(mf_storage);
-    // mf_operator.set_diffusion(diffusion_coefficient);
-    // mf_operator.set_reaction(reaction_coefficient);
-    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
-    //mf_operator.set_constraints(constraints);
-
+    
+    pcout << "  Evaluating coefficients..." << std::endl;
+    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient); 
 
     pcout << "  Initializing diagonal preconditioner" << std::endl;
     preconditioner.initialize(*mf_storage, mf_operator);
@@ -136,7 +135,7 @@ void Poisson3DParallel::setup()
   }
 }
 
-void Poisson3DParallel::assemble()
+void Poisson3DParallelMf::assemble()
 {
   pcout << "===============================================" << std::endl;
 
@@ -195,7 +194,7 @@ void Poisson3DParallel::assemble()
   system_rhs.compress(VectorOperation::add);
 }
 
-void Poisson3DParallel::solve()
+void Poisson3DParallelMf::solve()
 {
   pcout << "===============================================" << std::endl;
 
@@ -215,7 +214,7 @@ void Poisson3DParallel::solve()
   pcout << "  CG iterations: " << solver_control.last_step() << "cg residuals: " << solver_control.last_value() << std::endl;
 }
 
-void Poisson3DParallel::output() const
+void Poisson3DParallelMf::output() const
 {
   pcout << "===============================================" << std::endl;
 
@@ -264,7 +263,7 @@ void Poisson3DParallel::output() const
 }
 
 double
-Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
+Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
 {
   FE_SimplexP<dim> fe_linear(1);
   MappingFE mapping(fe_linear);
@@ -293,4 +292,22 @@ Poisson3DParallel::compute_error(const VectorTools::NormType &norm_type) const
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 
   return error;
+}
+
+
+double Poisson3DParallelMf::get_memory_consumption() const
+{
+  // 1. Matrix-Free Storage (replaces system_matrix)
+  double memory_matrix = mf_storage->memory_consumption();
+
+  // 2. Vectors
+  double memory_vectors = system_rhs.memory_consumption() + solution.memory_consumption();
+
+  // 3. Grid/DoF
+  double memory_grid = mesh.memory_consumption() + dof_handler.memory_consumption();
+
+  double local_memory = memory_matrix + memory_vectors + memory_grid;
+  double global_memory = Utilities::MPI::sum(local_memory, MPI_COMM_WORLD);
+
+  return global_memory / 1024.0 / 1024.0; // MB
 }

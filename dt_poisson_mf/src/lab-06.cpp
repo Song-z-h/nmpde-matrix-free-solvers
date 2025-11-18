@@ -22,7 +22,7 @@
 
 
     const double T      = 1.0;
-    const double theta  = 1.0;
+    const double theta  = 0.0;
 
     std::ofstream convergence_file("convergence.csv");
     convergence_file << "deltat,eL2,eH1" << std::endl;

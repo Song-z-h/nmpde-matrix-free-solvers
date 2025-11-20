@@ -13,23 +13,6 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
   
-  std::vector<std::string> mesh_file_names;
-  if (Poisson3DParallelMf::dim == 3)
-  {
-    mesh_file_names = {
-        "../mesh/mesh-cube-5.msh",
-        "../mesh/mesh-cube-10.msh",
-        "../mesh/mesh-cube-20.msh",
-        "../mesh/mesh-cube-40.msh"};
-  }
-  if (Poisson3DParallelMf::dim == 2)
-  {
-    mesh_file_names = {
-        "../mesh/mesh-square-5.msh",
-        "../mesh/mesh-square-10.msh",
-        "../mesh/mesh-square-20.msh",
-        "../mesh/mesh-square-40.msh"};
-  }
   std::vector<int> mesh_Ns = {5, 10, 20, 40};
 
   TimerOutput timer(MPI_COMM_WORLD, pcout, TimerOutput::summary, TimerOutput::wall_times);
@@ -54,8 +37,7 @@ int main(int argc, char *argv[])
   {
     pcout << "Mesh size " << mesh_Ns[i] << std::endl;
 
-    // Ensure this constructor matches your .hpp (add 'degree' if you updated the constructor)
-    Poisson3DParallelMf problem(mesh_file_names[i]); 
+    Poisson3DParallelMf problem(mesh_Ns[i]); 
     
     double setup_time, assemble_time, solve_time, output_time, error_time;
 
@@ -67,19 +49,13 @@ int main(int argc, char *argv[])
       setup_timer.stop();
     }
 
-    // ============================================================
-    // <--- NEW: MEASURE MEMORY HERE
-    // ============================================================
-    // 1. Get the precise size of the data structures (Matrix-Free storage + Vectors)
     double precise_memory_mb = problem.get_memory_consumption();
 
-    // 2. (Optional) Get System Peak RSS for comparison
     Utilities::System::MemoryStats stats;
     Utilities::System::get_memory_stats(stats);
     
     pcout << "  > Precise Memory (MF + Vecs): " << precise_memory_mb << " MB" << std::endl;
     pcout << "  > System Peak RSS: " << stats.VmHWM / 1024.0 << " MB" << std::endl;
-    // ============================================================
 
     {
       TimerOutput::Scope t(timer, "Assemble");
@@ -117,7 +93,7 @@ int main(int argc, char *argv[])
     table.add_value("h", h);
     table.add_value("L2", error_L2);
     table.add_value("H1", error_H1);
-    table.add_value("Memory", precise_memory_mb); // Add to console table
+    table.add_value("Memory", precise_memory_mb); 
 
     if (mpi_rank == 0)
     {

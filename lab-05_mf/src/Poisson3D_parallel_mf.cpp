@@ -3,54 +3,40 @@
 void Poisson3DParallelMf::setup()
 {
   pcout << "===============================================" << std::endl;
+  pcout << "Initializing the mesh (Hypercube Generator)" << std::endl;
 
-  // Create the mesh.
-  {
-    pcout << "Initializing the mesh" << std::endl;
+  Triangulation<dim> mesh_serial;
 
-    // First we read the mesh from file into a serial (i.e. not parallel)
-    // triangulation.
-    Triangulation<dim> mesh_serial;
+  // 1. Use the N provided by main() directly
+  // This creates a cube split into N x N x N cells
+  GridGenerator::subdivided_hyper_cube(mesh_serial, N, 0.0, 1.0);
+  
+  
 
-    {
-      GridIn<dim> grid_in;
-      grid_in.attach_triangulation(mesh_serial);
+  pcout << "  Subdivisions per axis: " << N << std::endl;
 
-      std::ifstream grid_in_file(mesh_file_name);
-      grid_in.read_msh(grid_in_file);
-    }
+  // 2. Partitioning (Standard)
+  GridTools::partition_triangulation(mpi_size, mesh_serial);
+  const auto construction_data = TriangulationDescription::Utilities::
+      create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
+  mesh.create_triangulation(construction_data);
 
-    // Then, we copy the triangulation into the parallel one.
-    {
-      GridTools::partition_triangulation(mpi_size, mesh_serial);
-      const auto construction_data = TriangulationDescription::Utilities::
-          create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
-      mesh.create_triangulation(construction_data);
-    }
-
-    // Notice that we write here the number of *global* active cells (across all
-    // processes).
-    pcout << "  Number of elements = " << mesh.n_global_active_cells()
-          << std::endl;
-  }
-
+  pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
   pcout << "-----------------------------------------------" << std::endl;
 
-  // Initialize the finite element space. This is the same as in serial codes.
+  // 3. Finite Element Space (Use FE_Q for Hypercubes!)
   {
-    pcout << "Initializing the finite element space" << std::endl;
-
-    fe = std::make_unique<FE_SimplexP<dim>>(r);
-
-    pcout << "  Degree                     = " << fe->degree << std::endl;
-    pcout << "  DoFs per cell              = " << fe->dofs_per_cell
-          << std::endl;
-
-    quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-
-    pcout << "  Quadrature points per cell = " << quadrature->size()
-          << std::endl;
-  }
+      // IMPORTANT: Use FE_Q (Cubes), NOT FE_SimplexP (Tetrahedra)
+      fe = std::make_unique<FE_Q<dim>>(r);
+      
+      // Use QGauss (Tensor Product), NOT QGaussSimplex
+      quadrature = std::make_unique<QGauss<dim>>(r + 1);
+      
+      pcout << "  Degree = " << fe->degree << std::endl;
+      pcout << "  DoFs per cell = " << fe->dofs_per_cell << std::endl;
+      pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
+  }   
+      
 
   pcout << "-----------------------------------------------" << std::endl;
 
@@ -113,7 +99,7 @@ void Poisson3DParallelMf::setup()
     MappingFE<dim> mapping_local(*fe);
     mf_storage = std::make_shared<MatrixFree<dim, Number>>();
     mf_storage->reinit(mapping_local, dof_handler, constraints,
-                       QGaussSimplex<dim>(fe->degree + 1),
+                       QGauss<dim>(fe->degree + 1),
                        additional_data);
 
     // Initialize vectors using MatrixFree's partitioner for compatibility
@@ -130,7 +116,7 @@ void Poisson3DParallelMf::setup()
     mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient); 
 
     pcout << "  Initializing diagonal preconditioner" << std::endl;
-    preconditioner.initialize(*mf_storage, mf_operator);
+    //preconditioner.initialize(*mf_storage, mf_operator);
     pcout << "Setup completed" << std::endl;
   }
 }
@@ -208,7 +194,7 @@ void Poisson3DParallelMf::solve()
   // initial guess zero
   solution = 0;
 
-  solver.solve(mf_operator, solution, system_rhs, preconditioner);
+  solver.solve(mf_operator, solution, system_rhs, PreconditionIdentity());
   constraints.distribute(solution);
 
   pcout << "  CG iterations: " << solver_control.last_step() << "cg residuals: " << solver_control.last_value() << std::endl;
@@ -246,8 +232,9 @@ void Poisson3DParallelMf::output() const
 
   data_out.build_patches();
 
-  const std::filesystem::path mesh_path(mesh_file_name);
-  const std::string output_file_name = "output-" + mesh_path.stem().string();
+// Assuming N is an int or unsigned int
+const std::filesystem::path mesh_path("mesh-cube-" + std::to_string(N) + ".msh");
+const std::string output_file_name = "output-" + mesh_path.stem().string();
 
   // Finally, we need to write in a format that supports parallel output. This
   // can be achieved in multiple ways (e.g. XDMF/H5). We choose VTU/PVTU files,
@@ -265,12 +252,12 @@ void Poisson3DParallelMf::output() const
 double
 Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
 {
-  FE_SimplexP<dim> fe_linear(1);
+  FE_Q<dim> fe_linear(1);
   MappingFE mapping(fe_linear);
   // The error is an integral, and we approximate that integral using a
   // quadrature formula. To make sure we are accurate enough, we use a
   // quadrature formula with one node more than what we used in assembly.
-  const QGaussSimplex<dim> quadrature_error(r + 2);
+  const QGauss<dim> quadrature_error(r + 2);
 
   VectorType ghosted_solution(locally_owned_dofs,
                               locally_relevant_dofs,

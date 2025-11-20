@@ -51,7 +51,7 @@ class Poisson3DParallelMf
 public:
   // Physical dimension (1D, 2D, 3D)
   static constexpr unsigned int dim = 3;
-  static constexpr unsigned int fe_degree = 2;
+  static constexpr unsigned int fe_degree = 3;
   using Number = double;
   using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
 
@@ -453,8 +453,8 @@ public:
   };
 
   // Constructor.
-  Poisson3DParallelMf(const std::string &mesh_file_name_)
-      : mesh_file_name(mesh_file_name_), r(fe_degree), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
+  Poisson3DParallelMf(const int _N)
+      : N(_N), r(fe_degree), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
   {
   }
 
@@ -480,7 +480,8 @@ public:
 
 protected:
   // Path to the mesh file.
-  const std::string mesh_file_name;
+  //const std::string mesh_file_name;
+  const int N;
 
   // Polynomial degree.
   const unsigned int r;

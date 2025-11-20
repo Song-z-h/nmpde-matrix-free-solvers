@@ -4,52 +4,38 @@ void Poisson3DParallelMf::setup()
 {
   pcout << "===============================================" << std::endl;
 
-  // Create the mesh.
+  // --- CHANGE 1: Mesh Generation ---
   {
-    pcout << "Initializing the mesh" << std::endl;
-
-    // First we read the mesh from file into a serial (i.e. not parallel)
-    // triangulation.
+    pcout << "Initializing the mesh (Hypercube)" << std::endl;
     Triangulation<dim> mesh_serial;
 
-    {
-      GridIn<dim> grid_in;
-      grid_in.attach_triangulation(mesh_serial);
+    // Use GridGenerator instead of GridIn
+    GridGenerator::subdivided_hyper_cube(mesh_serial, N, 0.0, 1.0);
 
-      std::ifstream grid_in_file(mesh_file_name);
-      grid_in.read_msh(grid_in_file);
-    }
+    GridTools::partition_triangulation(mpi_size, mesh_serial);
+    const auto construction_data = TriangulationDescription::Utilities::
+        create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
+    mesh.create_triangulation(construction_data);
 
-    // Then, we copy the triangulation into the parallel one.
-    {
-      GridTools::partition_triangulation(mpi_size, mesh_serial);
-      const auto construction_data = TriangulationDescription::Utilities::
-          create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
-      mesh.create_triangulation(construction_data);
-    }
-
-    // Notice that we write here the number of *global* active cells (across all
-    // processes).
-    pcout << "  Number of elements = " << mesh.n_global_active_cells()
-          << std::endl;
+    pcout << "  Subdivisions: " << N << std::endl;
+    pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
   }
 
   pcout << "-----------------------------------------------" << std::endl;
 
-  // Initialize the finite element space. This is the same as in serial codes.
+  // --- CHANGE 2: Finite Element & Quadrature ---
   {
     pcout << "Initializing the finite element space" << std::endl;
 
-    fe = std::make_unique<FE_SimplexP<dim>>(r);
+    // Use FE_Q (Cubes), NOT FE_SimplexP
+    fe = std::make_unique<FE_Q<dim>>(r);
+
+    // Use QGauss (Tensor Product), NOT QGaussSimplex
+    quadrature = std::make_unique<QGauss<dim>>(r + 1);
 
     pcout << "  Degree                     = " << fe->degree << std::endl;
-    pcout << "  DoFs per cell              = " << fe->dofs_per_cell
-          << std::endl;
-
-    quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-
-    pcout << "  Quadrature points per cell = " << quadrature->size()
-          << std::endl;
+    pcout << "  DoFs per cell              = " << fe->dofs_per_cell << std::endl;
+    pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
   }
 
   pcout << "-----------------------------------------------" << std::endl;
@@ -66,7 +52,6 @@ void Poisson3DParallelMf::setup()
     locally_owned_dofs = dof_handler.locally_owned_dofs();
 
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-
 
     pcout << "  Number of DoFs = " << dof_handler.n_dofs() << std::endl;
   }
@@ -99,8 +84,8 @@ void Poisson3DParallelMf::setup()
     // To initialize the sparsity pattern, we use Trilinos' class, that manages
     // some of the inter-process communication.
     TrilinosWrappers::SparsityPattern sparsity(locally_owned_dofs,
-                                                locally_owned_dofs,
-                                                locally_relevant_dofs,
+                                               locally_owned_dofs,
+                                               locally_relevant_dofs,
                                                MPI_COMM_WORLD);
     DoFTools::make_sparsity_pattern(dof_handler, sparsity, constraints, true);
 
@@ -118,17 +103,16 @@ void Poisson3DParallelMf::setup()
     pcout << "  Initializing the system right-hand side" << std::endl;
     system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
     pcout << "  Initializing the solution vector" << std::endl;
-    //solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);y
+    // solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);y
     solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);
-
   }
 }
 
 void Poisson3DParallelMf::assemble()
 {
   std::cout << "Rank " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)
-          << " constraints size = " << constraints.n_constraints()
-          << std::endl;
+            << " constraints size = " << constraints.n_constraints()
+            << std::endl;
 
   pcout << "===============================================" << std::endl;
 
@@ -137,7 +121,7 @@ void Poisson3DParallelMf::assemble()
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
   const unsigned int n_q = quadrature->size();
 
-  //MappingFE<dim> mapping_assemble(*fe);
+  // MappingFE<dim> mapping_assemble(*fe);
   FEValues<dim> fe_values(*fe,
                           *quadrature,
                           update_values | update_gradients |
@@ -194,19 +178,18 @@ void Poisson3DParallelMf::assemble()
 
     cell->get_dof_indices(dof_indices);
 
-    //system_matrix.add(dof_indices, cell_matrix);
-    //system_rhs.add(dof_indices, cell_rhs);
+    // system_matrix.add(dof_indices, cell_matrix);
+    // system_rhs.add(dof_indices, cell_rhs);
     constraints.distribute_local_to_global(cell_matrix, cell_rhs,
-                                       dof_indices, system_matrix, system_rhs);
-
+                                           dof_indices, system_matrix, system_rhs);
   }
 
   // Each process might have written to some rows it does not own (for instance,
   // if it owns elements that are adjacent to elements owned by some other
   // process). Therefore, at the end of the assembly, processes need to exchange
   // information: the compress method allows to do this.
-    system_matrix.compress(VectorOperation::add);
-    system_rhs.compress(VectorOperation::add);
+  system_matrix.compress(VectorOperation::add);
+  system_rhs.compress(VectorOperation::add);
 
   /*// Boundary conditions.
   {
@@ -237,18 +220,18 @@ void Poisson3DParallelMf::solve()
   // Trilinos linear algebra.
   SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
-  //TrilinosWrappers::PreconditionSSOR preconditioner;
-  //preconditioner.initialize(
-    //system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
-  
-    TrilinosWrappers::PreconditionJacobi preconditioner;
+  // TrilinosWrappers::PreconditionSSOR preconditioner;
+  // preconditioner.initialize(
+  // system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
+
+  TrilinosWrappers::PreconditionJacobi preconditioner;
   preconditioner.initialize(system_matrix);
 
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, preconditioner);
+  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
   constraints.distribute(solution);
 
-  pcout << "  " << solver_control.last_step()  << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;
+  pcout << "  " << solver_control.last_step() << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;
 }
 
 void Poisson3DParallelMf::output() const
@@ -282,7 +265,7 @@ void Poisson3DParallelMf::output() const
 
   data_out.build_patches();
 
-  const std::filesystem::path mesh_path(mesh_file_name);
+  const std::filesystem::path mesh_path("mesh-cube-" + std::to_string(N) + ".msh");
   const std::string output_file_name = "output-" + mesh_path.stem().string();
 
   // Finally, we need to write in a format that supports parallel output. This
@@ -301,12 +284,12 @@ void Poisson3DParallelMf::output() const
 double
 Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
 {
-  FE_SimplexP<dim> fe_linear(1);
+  FE_Q<dim> fe_linear(1);
   MappingFE mapping(fe_linear);
   // The error is an integral, and we approximate that integral using a
   // quadrature formula. To make sure we are accurate enough, we use a
   // quadrature formula with one node more than what we used in assembly.
-  const QGaussSimplex<dim> quadrature_error(r + 2);
+  const QGauss<dim> quadrature_error(r + 2);
 
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell(mesh.n_active_cells());
@@ -329,9 +312,7 @@ Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 
   return error;
-
 }
-
 
 // ... existing code ...
 
@@ -343,11 +324,11 @@ double Poisson3DParallelMf::get_memory_consumption() const
   double memory_matrix = system_matrix.memory_consumption();
 
   // 2. Memory of Vectors (Solution + RHS)
-  double memory_vectors = system_rhs.memory_consumption() + 
+  double memory_vectors = system_rhs.memory_consumption() +
                           solution.memory_consumption();
 
   // 3. Memory of Mesh and DoFHandler
-  double memory_grid = mesh.memory_consumption() + 
+  double memory_grid = mesh.memory_consumption() +
                        dof_handler.memory_consumption();
 
   // Sum local memory

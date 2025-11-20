@@ -12,6 +12,7 @@
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
+#include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_fe.h>
 
@@ -195,8 +196,8 @@ public:
   };
 
   // Constructor.
-  Poisson3DParallelMf(const std::string &mesh_file_name_, const unsigned int &r_)
-      : mesh_file_name(mesh_file_name_), r(r_), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
+  Poisson3DParallelMf(const int _N, const unsigned int &r_)
+      : N(_N), r(r_), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
   {
   }
 
@@ -223,8 +224,7 @@ public:
 
 public:
   // Path to the mesh file.
-  const std::string mesh_file_name;
-
+  const int N;
   // Polynomial degree.
   const unsigned int r;
 

@@ -14,7 +14,7 @@ otherwise you can just create a simple container to run the code
 eval "$(ssh-agent -s)"
 ssh-add # Follow prompts to add your key(s) or just ssh-add for using the default one
 
-docker run -it --name nmpde-env \
+docker run -it --rm --name nmpde-env \
   -v $HOME/polimi/amsc24-25:/home/jellyfish/shared-folder \
   -v $SSH_AUTH_SOCK:/ssh-agent \
   -e SSH_AUTH_SOCK=/ssh-agent \

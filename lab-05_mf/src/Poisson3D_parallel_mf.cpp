@@ -116,7 +116,7 @@ void Poisson3DParallelMf::setup()
     mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient); 
 
     pcout << "  Initializing diagonal preconditioner" << std::endl;
-    //preconditioner.initialize(*mf_storage, mf_operator);
+    preconditioner.initialize(*mf_storage, mf_operator);
     pcout << "Setup completed" << std::endl;
   }
 }
@@ -194,7 +194,7 @@ void Poisson3DParallelMf::solve()
   // initial guess zero
   solution = 0;
 
-  solver.solve(mf_operator, solution, system_rhs, PreconditionIdentity());
+  solver.solve(mf_operator, solution, system_rhs, preconditioner);
   constraints.distribute(solution);
 
   pcout << "  CG iterations: " << solver_control.last_step() << "cg residuals: " << solver_control.last_value() << std::endl;

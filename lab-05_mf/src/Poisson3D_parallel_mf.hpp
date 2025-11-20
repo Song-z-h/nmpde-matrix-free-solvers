@@ -329,37 +329,17 @@ public:
 
    void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree+1, 1, number> &fe) const
 {
-  
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  AlignedVector<VectorizedArray<number>> diagonal_values(dofs_per_cell);
-  for (unsigned int i = 0; i < dofs_per_cell; ++i)
-  {
-    for (unsigned int j = 0; j < dofs_per_cell; ++j)
-    fe.begin_dof_values()[j] = 0.0;
-    
-    fe.begin_dof_values()[i] = 1.0;
+    const unsigned int cell = fe.get_current_cell_index();
     
     fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-    
-    const unsigned int cell = fe.get_current_cell_index();
     for (unsigned int q : fe.quadrature_point_indices())
     {
-      auto D = diffusion_coefficient(cell, q);
-      auto R = reaction_coefficient(cell, q);
-      
-      fe.submit_gradient(D * fe.get_gradient(q), q);
-      fe.submit_value(R * fe.get_value(q), q);
+      fe.submit_gradient(diffusion_coefficient(cell, q) * fe.get_gradient(q), q);
+      fe.submit_value(reaction_coefficient(cell, q) * fe.get_value(q), q);
     }
     
     fe.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
     
-    diagonal_values[i] = fe.begin_dof_values()[i];
-  }
-  
-  for (unsigned int i = 0; i < dofs_per_cell; ++i)
-  {
-    fe.begin_dof_values()[i] = diagonal_values[i];
-  }
 }
 
   private:

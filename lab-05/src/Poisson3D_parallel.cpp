@@ -213,7 +213,7 @@ void Poisson3DParallelMf::solve()
 {
   pcout << "===============================================" << std::endl;
 
-  SolverControl solver_control(10000, 1e-8 * system_rhs.l2_norm());
+  SolverControl solver_control(50000, 1e-8 * system_rhs.l2_norm());
 
   // The linear solver is basically the same as in serial, in terms of
   // interface: we only have to use appropriate classes, compatible with
@@ -227,8 +227,12 @@ void Poisson3DParallelMf::solve()
   TrilinosWrappers::PreconditionJacobi preconditioner;
   preconditioner.initialize(system_matrix);
 
+  //TrilinosWrappers::PreconditionAMG preconditioner;
+  //pcout << "  Initializing AMG..." << std::endl;
+  //preconditioner.initialize(system_matrix);
+
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
+  solver.solve(system_matrix, solution, system_rhs, preconditioner);
   constraints.distribute(solution);
 
   pcout << "  " << solver_control.last_step() << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;

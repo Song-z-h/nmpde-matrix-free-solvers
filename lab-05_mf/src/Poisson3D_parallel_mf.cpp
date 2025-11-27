@@ -5,69 +5,41 @@ void Poisson3DParallelMf::setup()
   pcout << "===============================================" << std::endl;
   pcout << "Initializing the mesh (Hypercube Generator)" << std::endl;
 
-  Triangulation<dim> mesh_serial;
-
-  // 1. Use the N provided by main() directly
-  // This creates a cube split into N x N x N cells
-  GridGenerator::subdivided_hyper_cube(mesh_serial, N, 0.0, 1.0);
-  
-  
+  GridGenerator::subdivided_hyper_cube(mesh, N, 0.0, 1.0);
+  mesh.refine_global(1);
 
   pcout << "  Subdivisions per axis: " << N << std::endl;
-
-  // 2. Partitioning (Standard)
-  GridTools::partition_triangulation(mpi_size, mesh_serial);
-  const auto construction_data = TriangulationDescription::Utilities::
-      create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
-  mesh.create_triangulation(construction_data);
-
   pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
   pcout << "-----------------------------------------------" << std::endl;
 
-  // 3. Finite Element Space (Use FE_Q for Hypercubes!)
+  // 3. Finite Element Space
   {
-      // IMPORTANT: Use FE_Q (Cubes), NOT FE_SimplexP (Tetrahedra)
-      fe = std::make_unique<FE_Q<dim>>(r);
-      
-      // Use QGauss (Tensor Product), NOT QGaussSimplex
-      quadrature = std::make_unique<QGauss<dim>>(r + 1);
-      
-      pcout << "  Degree = " << fe->degree << std::endl;
-      pcout << "  DoFs per cell = " << fe->dofs_per_cell << std::endl;
-      pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
-  }   
-      
+    fe = std::make_unique<FE_Q<dim>>(r);
+    quadrature = std::make_unique<QGauss<dim>>(r + 1);
+
+    pcout << "  Degree = " << fe->degree << std::endl;
+    pcout << "  DoFs per cell = " << fe->dofs_per_cell << std::endl;
+  }
 
   pcout << "-----------------------------------------------" << std::endl;
 
   // Initialize the DoF handler.
   {
     pcout << "Initializing the DoF handler" << std::endl;
-
     dof_handler.reinit(mesh);
     dof_handler.distribute_dofs(*fe);
-
-    // We retrieve the set of locally owned DoFs, which will be useful when
-    // initializing linear algebra classes.
     locally_owned_dofs = dof_handler.locally_owned_dofs();
-
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-
     pcout << "  Number of DoFs = " << dof_handler.n_dofs() << std::endl;
   }
 
   pcout << "-----------------------------------------------" << std::endl;
 
-  // Initialize the linear system.
+  // Initialize constraints (Dirichlet + hanging nodes)
   {
     pcout << "Initializing the linear system" << std::endl;
-
-    pcout << "  Initializing the sparsity pattern" << std::endl;
-
-    // Build constraints here
     pcout << "Building the constraints" << std::endl;
     constraints.clear();
-    //constraints.reinit(locally_owned_dofs);
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
@@ -80,103 +52,163 @@ void Poisson3DParallelMf::setup()
                                              boundary_functions,
                                              constraints);
     constraints.close();
-
-    // Finally, we initialize the right-hand side and solution vectors.
-    // pcout << "  Initializing the system right-hand side" << std::endl;
-    // system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
-    // pcout << "  Initializing the solution vector" << std::endl;
-    // solution.reinit(locally_owned_dofs, MPI_COMM_WORLD);
   }
 
-  // matrix-free settings
+  // --- Global MatrixFree + operator (one level) ---
   {
-
     additional_data.tasks_parallel_scheme =
-        MatrixFree<dim, double>::AdditionalData::none; // single-threaded, keep MPI
+      MatrixFree<dim, Number>::AdditionalData::none;
     additional_data.mapping_update_flags =
-        (update_gradients | update_values | update_JxW_values | update_quadrature_points);
+      (update_gradients | update_values | update_JxW_values | update_quadrature_points);
+    // additional_data.mg_level left at default: global operator
 
-    MappingFE<dim> mapping_local(*fe);
+    MappingQ1<dim> mapping_global;
+
     mf_storage = std::make_shared<MatrixFree<dim, Number>>();
-    mf_storage->reinit(mapping_local, dof_handler, constraints,
-                       QGauss<dim>(fe->degree + 1),
+    mf_storage->reinit(mapping_global,
+                       dof_handler,
+                       constraints,
+                       QGauss<1>(fe->degree + 1),
                        additional_data);
 
-    // Initialize vectors using MatrixFree's partitioner for compatibility
     pcout << "  Initializing the system right-hand side" << std::endl;
     mf_storage->initialize_dof_vector(system_rhs);
     pcout << "  Initializing the solution vector" << std::endl;
     mf_storage->initialize_dof_vector(solution);
 
-    // Initialize our matrix-free operator
-   pcout << "  Initializing operator..." << std::endl;
+    pcout << "  Initializing operator..." << std::endl;
     mf_operator.initialize(mf_storage);
-    
-    pcout << "  Evaluating coefficients..." << std::endl;
-    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient); 
 
-    pcout << "  Initializing diagonal preconditioner" << std::endl;
-    preconditioner.initialize(*mf_storage, mf_operator);
-    pcout << "Setup completed" << std::endl;
+    pcout << "  Evaluating coefficients..." << std::endl;
+    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
   }
+
+  // --- Geometric Multigrid setup (matrix-free on all levels) ---
+  {
+    pcout << "  Setting up Multigrid..." << std::endl;
+
+    // A. MG DoFs + constraints
+    dof_handler.distribute_mg_dofs();
+
+    mg_constrained_dofs.clear();
+    mg_constrained_dofs.initialize(dof_handler);
+
+    std::set<types::boundary_id> boundary_ids;
+    for (const auto &id : mesh.get_boundary_ids())
+      boundary_ids.insert(id);
+    mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, boundary_ids);
+
+    // B. Level containers
+    const unsigned int n_levels = dof_handler.get_triangulation().n_global_levels();
+
+    mg_mf_storage.resize(0, n_levels - 1);
+    mg_matrices.resize(0, n_levels - 1);
+    mg_interface_matrices.resize(0, n_levels - 1);
+
+    MGLevelObject<typename SmootherType::AdditionalData> smoother_data_container;
+    smoother_data_container.resize(0, n_levels - 1);
+
+    // C. Build per-level MatrixFree + operators
+    MappingQ1<dim> mapping_mg;
+    const QGauss<1> level_quadrature(fe->degree + 1);
+
+    for (unsigned int level = 0; level < n_levels; ++level)
+    {
+      // MatrixFree AdditionalData for this level
+      typename MatrixFree<dim, Number>::AdditionalData level_data;
+      level_data.tasks_parallel_scheme =
+        MatrixFree<dim, Number>::AdditionalData::none;
+      level_data.mapping_update_flags =
+        (update_gradients | update_values | update_JxW_values |
+         update_quadrature_points);
+      level_data.mg_level = level;
+
+      // Level constraints: use what MGConstrainedDoFs built for us
+      const AffineConstraints<double> &level_constraints =
+        mg_constrained_dofs.get_level_constraints(level);
+
+      // Create and init MatrixFree object on this level
+      std::shared_ptr<MatrixFree<dim, Number>> mf_level(
+        new MatrixFree<dim, Number>());
+      mf_level->reinit(mapping_mg,
+                       dof_handler,
+                       level_constraints,
+                       level_quadrature,
+                       level_data);
+
+      mg_mf_storage[level] = mf_level;
+
+      // Level operator (Laplace)
+      mg_matrices[level].clear();
+      mg_matrices[level].initialize(mf_level, mg_constrained_dofs, level);
+
+      // Level-dependent coefficients (here just constant)
+      DiffusionCoefficient<dim> diff_lvl;
+      ReactionCoefficient<dim>  react_lvl;
+      mg_matrices[level].evaluate_coefficient(diff_lvl, react_lvl);
+
+      // Diagonal for Chebyshev smoother
+      mg_matrices[level].compute_diagonal();
+
+      // Smoother parameters (Chebyshev)
+      typename SmootherType::AdditionalData data;
+      data.smoothing_range       = 15.0;
+      data.degree                = 5;
+      data.eig_cg_n_iterations   = 10;
+      data.preconditioner        = mg_matrices[level].get_matrix_diagonal_inverse();
+
+      smoother_data_container[level] = data;
+
+      // Interface operator for this level (used for edge matrices)
+      mg_interface_matrices[level].initialize(mg_matrices[level]);
+    }
+
+    // D. Smoother wrapper
+    mg_smoother.initialize(mg_matrices, smoother_data_container);
+    mg_smoother.set_steps(2);
+
+    // E. Matrix wrappers (volume + interface operators)
+    mg_matrix_wrapper.initialize(mg_matrices);
+    mg_interface_wrapper.initialize(mg_interface_matrices);
+
+    // (No MGTransferMatrixFree here; we build it in solve() so we can rebuild
+    //  easily on each new mesh.)
+  }
+
+  // Simple memory report
+  const double memory_mb = get_memory_consumption();
+  pcout << "  > Precise Memory (MF + Vecs): " << std::fixed << std::setprecision(4)
+        << memory_mb << " MB" << std::endl;
 }
+
 
 void Poisson3DParallelMf::assemble()
 {
   pcout << "===============================================" << std::endl;
+  pcout << "Assembling RHS (Matrix-Free Style)" << std::endl;
 
-  pcout << "Assembling RHS (kept FEValues style for simplicity)" << std::endl;
-  const unsigned int dofs_per_cell = fe->dofs_per_cell;
-  const unsigned int n_q = quadrature->size();
-
-  MappingFE<dim> mapping_assemble(*fe);
-  FEValues<dim> fe_values(mapping_assemble, *fe,
-                          *quadrature,
-                          update_values |
-                              update_quadrature_points | update_JxW_values);
-
-  // FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
-  Vector<double> cell_rhs(dofs_per_cell);
-
-  std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
-
-  // system_matrix = 0.0;
+  // Zero the RHS vector
   system_rhs = 0.0;
 
-  for (const auto &cell : dof_handler.active_cell_iterators())
+  // Use FEEvaluation to integrate the forcing term
+  FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(*mf_storage);
+
+  for (unsigned int cell = 0; cell < mf_storage->n_cell_batches(); ++cell)
   {
-    // If current cell is not owned locally, we skip it.
-    if (!cell->is_locally_owned())
-      continue;
+    phi.reinit(cell);
 
-    // On all other cells (which are owned by current process), we perform the
-    // assembly as usual.
-
-    fe_values.reinit(cell);
-
-    // cell_matrix = 0.0;
-    cell_rhs = 0.0;
-
-    for (unsigned int q = 0; q < n_q; ++q)
+    for (const unsigned int q : phi.quadrature_point_indices())
     {
-      for (unsigned int i = 0; i < dofs_per_cell; ++i)
-      {
-
-        cell_rhs(i) += forcing_term.value(fe_values.quadrature_point(q)) *
-                       fe_values.shape_value(i, q) * fe_values.JxW(q);
-      }
+      const auto p = phi.quadrature_point(q);   // Point<dim, VectorizedArray<Number>>
+      const auto f_val = forcing_term.value(p); // vectorized value()
+      phi.submit_value(f_val, q);
     }
 
-    cell->get_dof_indices(dof_indices);
-    // system_matrix.add(dof_indices, cell_matrix);
-    constraints.distribute_local_to_global(cell_rhs, dof_indices, system_rhs);
+    phi.integrate(EvaluationFlags::values);
+    phi.distribute_local_to_global(system_rhs);
   }
 
-  // Each process might have written to some rows it does not own (for instance,
-  // if it owns elements that are adjacent to elements owned by some other
-  // process). Therefore, at the end of the assembly, processes need to exchange
-  // information: the compress method allows to do this.
-  // system_matrix.compress(VectorOperation::add);
+  // Compress the result
   system_rhs.compress(VectorOperation::add);
 }
 
@@ -184,21 +216,69 @@ void Poisson3DParallelMf::solve()
 {
   pcout << "===============================================" << std::endl;
 
-  pcout << "Solving with matrix-free operator (CG precond)" << std::endl;
+  // Apply Dirichlet constraints to RHS
   constraints.set_zero(system_rhs);
-  SolverControl solver_control(10000, 1e-8 * system_rhs.l2_norm());
+
+  // Global vectors for MF operator
+  VectorType x, b;
+  mf_storage->initialize_dof_vector(x);
+  mf_storage->initialize_dof_vector(b);
+
+  x = 0.0;
+  b = system_rhs;
+  b.update_ghost_values();
+
+  // Choose which preconditioner to test:
+  const bool use_gmg = true;   // <-- flip this to false for Identity baseline
+
+  SolverControl solver_control(1000, 1e-8 * b.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
-  // PreconditionIdentity preconditioner;
+  if (!use_gmg)
+  {
+    pcout << "Solving with global matrix-free operator (Identity preconditioner)" << std::endl;
+    PreconditionIdentity preconditioner;
+    solver.solve(mf_operator, x, b, preconditioner);
+  }
+  else
+  {
+    pcout << "Solving with global matrix-free operator (GMG preconditioner)" << std::endl;
 
-  // initial guess zero
-  solution = 0;
+    // --- GMG preconditioner path (your current code) ---
+    MGTransferMatrixFree<dim, Number> mg_transfer(mg_constrained_dofs);
+    mg_transfer.build(dof_handler);
 
-  solver.solve(mf_operator, solution, system_rhs, preconditioner);
-  constraints.distribute(solution);
+    SolverControl coarse_control(1000, 1e-12, false, false);
+    SolverCG<VectorType> coarse_solver(coarse_control);
+    PreconditionIdentity identity;
 
-  pcout << "  CG iterations: " << solver_control.last_step() << "cg residuals: " << solver_control.last_value() << std::endl;
+    MGCoarseGridIterativeSolver<VectorType,
+                                SolverCG<VectorType>,
+                                LevelMatrixType,
+                                PreconditionIdentity>
+      coarse_grid(coarse_solver, mg_matrices[0], identity);
+
+    mg::Matrix<VectorType> mg_m(mg_matrices);
+
+    Multigrid<VectorType> mg(mg_m,
+                             coarse_grid,
+                             mg_transfer,
+                             mg_smoother,
+                             mg_smoother);
+
+    PreconditionMG<dim, VectorType, MGTransferMatrixFree<dim, Number>>
+      preconditioner(dof_handler, mg, mg_transfer);
+
+    solver.solve(mf_operator, x, b, preconditioner);
+  }
+
+  constraints.distribute(x);
+  solution = x;
+
+  pcout << "  CG iterations: " << solver_control.last_step() << std::endl;
 }
+
+
 
 void Poisson3DParallelMf::output() const
 {
@@ -216,7 +296,7 @@ void Poisson3DParallelMf::output() const
                             MPI_COMM_WORLD);
 
   solution_ghost = solution;
-  solution_ghost.update_ghost_values();  // FIXED: Update ghosts
+  solution_ghost.update_ghost_values(); // FIXED: Update ghosts
   // This performs the necessary communication so that the locally relevant DoFs
   // are received from other processes and stored inside solution_ghost.
 
@@ -232,9 +312,9 @@ void Poisson3DParallelMf::output() const
 
   data_out.build_patches();
 
-// Assuming N is an int or unsigned int
-const std::filesystem::path mesh_path("mesh-cube-" + std::to_string(N) + ".msh");
-const std::string output_file_name = "output-" + mesh_path.stem().string();
+  // Assuming N is an int or unsigned int
+  const std::filesystem::path mesh_path("mesh-cube-" + std::to_string(N) + ".msh");
+  const std::string output_file_name = "output-" + mesh_path.stem().string();
 
   // Finally, we need to write in a format that supports parallel output. This
   // can be achieved in multiple ways (e.g. XDMF/H5). We choose VTU/PVTU files,
@@ -263,7 +343,7 @@ Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
                               locally_relevant_dofs,
                               MPI_COMM_WORLD);
   ghosted_solution = solution;
-  ghosted_solution.update_ghost_values();  // FIXED: Update ghosts
+  ghosted_solution.update_ghost_values(); // FIXED: Update ghosts
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell(mesh.n_active_cells());
   VectorTools::integrate_difference(mapping,
@@ -280,7 +360,6 @@ Poisson3DParallelMf::compute_error(const VectorTools::NormType &norm_type) const
 
   return error;
 }
-
 
 double Poisson3DParallelMf::get_memory_consumption() const
 {

@@ -5,12 +5,14 @@
 #include <deal.II/base/quadrature_lib.h>
 
 #include <deal.II/distributed/fully_distributed_tria.h>
+#include <deal.II/distributed/tria.h>
 
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_values.h>
+#include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/mapping_fe.h>
 
 #include <deal.II/grid/grid_generator.h>
@@ -35,11 +37,19 @@
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
 
-#include <deal.II/base/aligned_vector.h> 
+#include <deal.II/base/aligned_vector.h>
+#include <deal.II/multigrid/multigrid.h>
+#include <deal.II/multigrid/mg_transfer_matrix_free.h>
+#include <deal.II/multigrid/mg_tools.h>
+#include <deal.II/lac/solver_control.h>
+#include <deal.II/multigrid/mg_coarse.h>
+#include <deal.II/multigrid/mg_smoother.h>
+#include <deal.II/multigrid/mg_matrix.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 
 using namespace dealii;
 
@@ -51,10 +61,28 @@ class Poisson3DParallelMf
 public:
   // Physical dimension (1D, 2D, 3D)
   static constexpr unsigned int dim = 3;
-  static constexpr unsigned int fe_degree = 3;
+  static constexpr unsigned int fe_degree = 2;
   using Number = double;
   using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
 
+  template <typename VectorType>
+  void copy_vector_data(VectorType &dst, const VectorType &src)
+  {
+    // Explicitly copy locally owned elements index-by-index
+    // This bypasses layout/padding mismatches because we only touch valid DoFs.
+    const auto &local_indices = src.locally_owned_elements();
+
+    // Ensure dst is zeroed first (crucial for padding areas)
+    dst = 0.0;
+
+    for (const auto index : local_indices)
+    {
+      dst[index] = src[index];
+    }
+
+    // Ghosts must be updated after this manual copy
+    dst.compress(VectorOperation::insert);
+  }
   // Diffusion coefficient.
   // In deal.ii, functions are implemented by deriving the dealii::Function
   // class, which provides an interface for the computation of function values
@@ -113,33 +141,33 @@ public:
 
   // Forcing term.
   class ForcingTerm : public Function<dim>
-  {
-  public:
-    // Constructor.
-    ForcingTerm()
-    {
-    }
+{
+public:
+  ForcingTerm() = default;
 
-    // Evaluation.
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int /*component*/ = 0) const override
-    {
-      // for 2d mesh
-      if (dim == 2)
-      {
-        return (20.0 * M_PI * M_PI + 1.0) * sin(2.0 * M_PI * p[0]) * sin(4.0 * M_PI * p[1]);
-      }
-      // for 3d mesh
-      if (dim == 3)
-      {
-        return (29.0 * M_PI * M_PI + 1.0) *
-               std::sin(2.0 * M_PI * p[0]) *
-               std::sin(4.0 * M_PI * p[1]) *
-               std::sin(3.0 * M_PI * p[2]);
-      }
-    }
-  };
+  double value(const Point<dim> &p,
+               const unsigned int = 0) const override
+  {
+    return value<double>(p);
+  }
+
+  template <typename number>
+  number value(const Point<dim, number> &p,
+               const unsigned int = 0) const
+  {
+    if constexpr (dim == 2)
+      return (20.0 * M_PI * M_PI + 1.0) *
+             std::sin(2.0 * M_PI * p[0]) *
+             std::sin(4.0 * M_PI * p[1]);
+    else if constexpr (dim == 3)
+      return (29.0 * M_PI * M_PI + 1.0) *
+             std::sin(2.0 * M_PI * p[0]) *
+             std::sin(4.0 * M_PI * p[1]) *
+             std::sin(3.0 * M_PI * p[2]);
+    else
+      return number(0.0);
+  }
+};
 
   // Dirichlet boundary conditions.
   class FunctionG : public Function<dim>
@@ -254,12 +282,39 @@ public:
                                         this);
 
       this->set_constrained_entries_to_one(diagonal);
+
+
+
+      // --- DEBUG: diagonal statistics (min/max over all processes) ---
+  const unsigned int local_size = diagonal.local_size();
+  double local_min = std::numeric_limits<double>::max();
+  double local_max = -std::numeric_limits<double>::max();
+
+  for (unsigned int i = 0; i < local_size; ++i)
+  {
+    const double v = diagonal.local_element(i);
+    if (v < local_min) local_min = v;
+    if (v > local_max) local_max = v;
+  }
+
+  const MPI_Comm comm = diagonal.get_mpi_communicator();
+  const double global_min = Utilities::MPI::min(local_min, comm);
+  const double global_max = Utilities::MPI::max(local_max, comm);
+
+  if (Utilities::MPI::this_mpi_process(comm) == 0)
+    std::cout << "[DIAG] min(diag) = " << global_min
+              << ", max(diag) = " << global_max << std::endl;
+  // --- END DEBUG ---   
+
+
+
+
+
       this->inverse_diagonal_entries.reset(
           new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>(diagonal));
 
       LinearAlgebra::distributed::Vector<number> &inv_vec =
           this->inverse_diagonal_entries->get_vector();
-
 
       for (unsigned int i = 0; i < inv_vec.local_size(); ++i)
       {
@@ -276,7 +331,8 @@ public:
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
                               const ReactionCoefficient<dim> &reaction_function)
     {
-      if (!this->data) return; // Safety check
+      if (!this->data)
+        return; // Safety check
       const unsigned int n_cells = this->data->n_cell_batches();
       FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(*this->data);
 
@@ -295,52 +351,33 @@ public:
       }
     }
 
-    void initialize(std::shared_ptr<MatrixFree<dim, Number>> mf_ptr)
+    void initialize(const std::shared_ptr<const MatrixFree<dim, number>> &mf_ptr)
     {
-      // this->mf = mf_ptr;
-      MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>::initialize(mf_ptr);
-      //this->data = mf_ptr;
-      // allocate temporaries (MatrixFree sizes things according to dof layout)
-      // const auto &partitioner = mf_ptr->get_vector_partitioner();
-      // tmp_dst.reinit(partitioner);
-      // tmp_src.reinit(partitioner);
-
-      // this->data->initialize_dof_vector(src_ghost, 0); // ghosted
+      MatrixFreeOperators::Base<dim,
+                                LinearAlgebra::distributed::Vector<number>>::initialize(mf_ptr);
     }
 
-    // void set_constraints(const AffineConstraints<Number> &c) { constraints_ptr = &c; }
-    //  vmult: compute dst = A * src
-    void vmult(VectorType &dst, const VectorType &src) const
+    void initialize(const std::shared_ptr<const MatrixFree<dim, number>> &mf_ptr,
+                    const MGConstrainedDoFs &mg_constraints,
+                    const unsigned int level)
     {
-      // src_ghost = src;
-      // src_ghost.update_ghost_values();
-
-      // if (constraints_ptr)
-      // constraints_ptr->set_zero(src_ghost);
-
-      dst = 0;
-      this->data->cell_loop(&MatrixFreeLaplaceOperator::local_apply, this, dst, src);
-      // dst.compress(VectorOperation::add); // Communicate additions to ghost entries
-      // if (constraints_ptr)
-      // constraints_ptr->set_zero(dst);
+      MatrixFreeOperators::Base<dim,
+                                LinearAlgebra::distributed::Vector<number>>::initialize(mf_ptr, mg_constraints, level);
     }
-    // 0.0250 1.00 4.0874e-03 2.01 6.1929e-01 0.99 with set_zero
-    // 0.0250 1.00 4.2253e-03 1.98 6.1764e-01 0.99 without set_zero
 
-   void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree+1, 1, number> &fe) const
-{
-    const unsigned int cell = fe.get_current_cell_index();
-    
-    fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-    for (unsigned int q : fe.quadrature_point_indices())
+    void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe) const
     {
-      fe.submit_gradient(diffusion_coefficient(cell, q) * fe.get_gradient(q), q);
-      fe.submit_value(reaction_coefficient(cell, q) * fe.get_value(q), q);
+      const unsigned int cell = fe.get_current_cell_index();
+
+      fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+      for (unsigned int q : fe.quadrature_point_indices())
+      {
+        fe.submit_gradient(diffusion_coefficient(cell, q) * fe.get_gradient(q), q);
+        fe.submit_value(reaction_coefficient(cell, q) * fe.get_value(q), q);
+      }
+
+      fe.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
     }
-    
-    fe.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
-    
-}
 
   private:
     // std::shared_ptr<MatrixFree<dim, Number>> mf;
@@ -350,8 +387,6 @@ public:
     //  ReactionCoefficient reaction;
     Table<2, VectorizedArray<number>> diffusion_coefficient;
     Table<2, VectorizedArray<number>> reaction_coefficient;
-
-    mutable VectorType src_ghost;
 
     virtual void apply_add(
         LinearAlgebra::distributed::Vector<number> &dst,
@@ -383,7 +418,7 @@ public:
         AssertDimension(reaction_coefficient.size(1), fe_eval.n_q_points);
 
         fe_eval.reinit(cell);
-        fe_eval.read_dof_values(src);
+        fe_eval.read_dof_values_plain(src);
         fe_eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
         for (const unsigned int q : fe_eval.quadrature_point_indices())
@@ -434,7 +469,14 @@ public:
 
   // Constructor.
   Poisson3DParallelMf(const int _N)
-      : N(_N), r(fe_degree), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), mesh(MPI_COMM_WORLD), pcout(std::cout, mpi_rank == 0)
+      : N(_N),
+        r(fe_degree),
+        mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
+        mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
+        /*mesh(MPI_COMM_WORLD)*/ mesh(MPI_COMM_WORLD,
+                                      dealii::Triangulation<dim>::limit_level_difference_at_vertices,
+                                      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+        pcout(std::cout, mpi_rank == 0)
   {
   }
 
@@ -460,7 +502,7 @@ public:
 
 protected:
   // Path to the mesh file.
-  //const std::string mesh_file_name;
+  // const std::string mesh_file_name;
   const int N;
 
   // Polynomial degree.
@@ -490,7 +532,8 @@ protected:
   // Triangulation. The parallel::fullydistributed::Triangulation class manages
   // a triangulation that is completely distributed (i.e. each process only
   // knows about the elements it owns and its ghost elements).
-  parallel::fullydistributed::Triangulation<dim> mesh;
+  parallel::distributed::Triangulation<dim> mesh;
+  // parallel::fullydistributed::Triangulation<dim> mesh;
 
   // Finite element space.
   std::unique_ptr<FiniteElement<dim>> fe;
@@ -541,10 +584,10 @@ protected:
     void initialize(const MatrixFree<dim> &matrix_free,
                     MatrixFreeLaplaceOperator<dim, fe_degree, Number> &laplace_op) // Your matrix-free operator class
     {
-      laplace_op.compute_diagonal();  // Fills with 1/diagonal elements
+      laplace_op.compute_diagonal(); // Fills with 1/diagonal elements
 
       matrix_free.initialize_dof_vector(inverse_diagonal);
-      inverse_diagonal = laplace_op.get_matrix_diagonal_inverse()->get_vector(); 
+      inverse_diagonal = laplace_op.get_matrix_diagonal_inverse()->get_vector();
     }
 
     void vmult(LinearAlgebra::distributed::Vector<double> &dst,
@@ -558,7 +601,48 @@ protected:
     LinearAlgebra::distributed::Vector<double> inverse_diagonal;
   };
 
-  DiagonalPreconditioner preconditioner;
+  // DiagonalPreconditioner preconditioner;
+
+  /*geometric multi grid*/
+  using LevelMatrixType = MatrixFreeLaplaceOperator<dim, fe_degree, Number>;
+  using SmootherType = PreconditionChebyshev<LevelMatrixType, VectorType>;
+  using MGTransferType = MGTransferMatrixFree<dim, Number>;
+  using MGInterfaceType = MatrixFreeOperators::MGInterfaceOperator<LevelMatrixType>;
+
+  // 2. MG hierarchy objects
+  MGLevelObject<std::shared_ptr<MatrixFree<dim, Number>>> mg_mf_storage;
+  MGLevelObject<LevelMatrixType> mg_matrices;
+  MGLevelObject<MGInterfaceType> mg_interface_matrices;
+
+  MGTransferType mg_transfer;
+  dealii::MGSmootherPrecondition<LevelMatrixType, SmootherType, VectorType> mg_smoother;
+
+  // wrappers around level & interface operators
+  dealii::mg::Matrix<VectorType> mg_matrix_wrapper;
+  dealii::mg::Matrix<VectorType> mg_interface_wrapper;
+
+  MGConstrainedDoFs mg_constrained_dofs;
+
+  class ScaledPreconditioner : public Subscriptor
+{
+public:
+  ScaledPreconditioner(const PreconditionMG<dim, VectorType, MGTransferType> &mg_preconditioner,
+                       const double                                          alpha)
+    : mg_preconditioner(mg_preconditioner)
+    , alpha(alpha)
+  {}
+
+  void vmult(VectorType &dst, const VectorType &src) const
+  {
+    mg_preconditioner.vmult(dst, src);
+    dst *= alpha;  // scale by alpha
+  }
+
+private:
+  const PreconditionMG<dim, VectorType, MGTransferType> &mg_preconditioner;
+  const double                                           alpha;
+};
+
 };
 
 #endif

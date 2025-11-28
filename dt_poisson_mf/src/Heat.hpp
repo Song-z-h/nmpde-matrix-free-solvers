@@ -41,7 +41,11 @@
 #include <deal.II/lac/precondition.h>
 
 #include <fstream>
+#include <memory>
+#include <iomanip>
 #include <iostream>
+#include <deal.II/base/timer.h>
+#include <deal.II/base/utilities.h>
 
 using namespace dealii;
 
@@ -51,8 +55,8 @@ class Heat
 
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 2;
-  static constexpr unsigned int fe_degree = 3;
+  static constexpr unsigned int dim = 1;
+  static constexpr unsigned int fe_degree = 2;
 
   using NUMBER = double;
   using VectorType = LinearAlgebra::distributed::Vector<NUMBER>; // same as solution/rhs
@@ -122,7 +126,7 @@ public:
     vector_value(const Point<dim> &p,
                  Vector<double> &values) const override
     {
-      for (unsigned int i = 1; i < dim; ++i)
+      for (unsigned int i = 0; i < dim; ++i)
         values[i] = value<NUMBER>(p, i);
     }
   };
@@ -239,11 +243,11 @@ public:
   // parameter as constructor arguments.
   Heat(const int N_,
        const std::string &mesh_file_name_,
-       const unsigned int &r_,
+       // const unsigned int &r_,
        const double &T_,
        const double &deltat_,
        const double &theta_)
-      : N(N_), mesh_file_name(mesh_file_name_), r(r_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD), mf_operator_lhs(deltat, theta, true), mf_operator_rhs(deltat, theta, false)
+      : N(N_), mesh_file_name(mesh_file_name_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD), mf_operator_lhs(deltat, theta, true), mf_operator_rhs(deltat, theta, false)
   {
   }
 
@@ -257,6 +261,18 @@ public:
 
   double
   compute_error(const VectorTools::NormType &norm_type);
+
+  double get_memory_consumption() const;
+
+  void set_timer(const std::shared_ptr<TimerOutput> &timer_) { timer = timer_; }
+
+    // High-level performance stats
+  unsigned int get_n_time_steps() const { return n_time_steps; }
+  unsigned long long get_total_gmres_iterations() const { return total_gmres_iterations; }
+  double get_total_linear_solve_time() const { return total_linear_solve_time; }
+
+
+  unsigned int get_number_of_dofs() const { return dof_handler.n_dofs(); }
 
   template <int dim, int fe_degree, typename number>
   class TimeStepOperator : public MatrixFreeOperators::Base<dim, VectorType>
@@ -306,32 +322,17 @@ public:
 
     void initialize(std::shared_ptr<MatrixFree<dim, number>> mf_ptr)
     {
-      //this->data = mf_ptr;
+      // this->data = mf_ptr;
       MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<number>>::initialize(mf_ptr);
     }
 
-    //void set_constraints(const AffineConstraints<number> &c) {}
-
-    void vmult(VectorType &dst, const VectorType &src) const
-    {
-      // src_ghost = src;
-      dst = 0;
-      this->data->cell_loop(&TimeStepOperator::local_apply, this, dst, src);
-    }
-
-    void vmult_add(VectorType &dst, const VectorType &src) const
-    {
-      this->apply_add(dst, src);
-    }
+    // void set_constraints(const AffineConstraints<number> &c) {}
 
     void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe_eval) const
     {
     }
 
   private:
-    mutable VectorType tmp_dst, tmp_src;
-    //const AffineConstraints<number> *constraints_ptr;
-
     Table<2, VectorizedArray<number>> diffusion_coefficient;
     Table<2, Tensor<1, dim, VectorizedArray<number>>> advection_coefficient;
     // Table<2, VectorizedArray<number>> advection_coefficient;
@@ -426,6 +427,8 @@ protected:
   FunctionBeta beta;
   FunctionAlpha alpha;
 
+  
+
   // stabilization term
   // FunctionTau tau;
 
@@ -444,7 +447,7 @@ protected:
   const std::string mesh_file_name;
 
   // Polynomial degree.
-  const unsigned int r;
+  // const unsigned int r;
 
   // Final time.
   const double T;
@@ -490,6 +493,8 @@ protected:
   // DoFs relevant to the current process (including ghost DoFs).
   IndexSet locally_relevant_dofs;
 
+  std::shared_ptr<TimerOutput> timer; // shared, non-owning from Heat's perspective
+
   // Mass matrix M / deltat.
   // TrilinosWrappers::SparseMatrix mass_matrix;
 
@@ -524,6 +529,14 @@ protected:
   TimeStepOperator<dim, fe_degree, NUMBER> mf_operator_rhs;
 
   typename MatrixFree<dim, NUMBER>::AdditionalData additional_data;
+
+  private:
+
+    // --- High-level performance counters ---
+  unsigned int        n_time_steps           = 0;
+  unsigned long long  total_gmres_iterations = 0;
+  double              total_linear_solve_time = 0.0; // [s]
+
 };
 
 #endif

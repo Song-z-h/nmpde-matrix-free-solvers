@@ -1,5 +1,6 @@
 #include "Heat.hpp"
 
+
 void Heat::setup()
 {
   pcout << "Initializing the mesh" << std::endl;
@@ -16,7 +17,7 @@ void Heat::setup()
   else
   {
     // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
-    //const unsigned int n_divisions = (dim == 2 ? 2 : 6);
+    // const unsigned int n_divisions = (dim == 2 ? 2 : 6);
     GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
                                                      serial_simplex_tria);
   }
@@ -55,16 +56,16 @@ void Heat::setup()
 
     if (dim > 1)
     {
-      fe = std::make_unique<FE_SimplexP<dim>>(r);
+      fe = std::make_unique<FE_SimplexP<dim>>(fe_degree);
       // Construct the quadrature formula of the appopriate degree of exactness.
-      quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-      quadrature_boundary = std::make_unique<QGaussSimplex<dim - 1>>(r + 1);
+      quadrature = std::make_unique<QGaussSimplex<dim>>(fe_degree + 1);
+      quadrature_boundary = std::make_unique<QGaussSimplex<dim - 1>>(fe_degree + 1);
     }
     else
     {
-      fe = std::make_unique<FE_Q<dim>>(r);
-      quadrature = std::make_unique<QGauss<dim>>(r + 1);
-      quadrature_boundary = std::make_unique<QGauss<dim - 1>>(r + 1);
+      fe = std::make_unique<FE_Q<dim>>(fe_degree);
+      quadrature = std::make_unique<QGauss<dim>>(fe_degree + 1);
+      quadrature_boundary = std::make_unique<QGauss<dim - 1>>(fe_degree + 1);
     }
 
     pcout << "  Degree                     = " << fe->degree << std::endl;
@@ -104,7 +105,7 @@ void Heat::setup()
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-    //for (const auto &id : mesh.get_boundary_ids())
+    // for (const auto &id : mesh.get_boundary_ids())
     boundary_functions[0] = &bc_function;
 
     MappingFE<dim> mapping(*fe);
@@ -113,7 +114,6 @@ void Heat::setup()
                                              boundary_functions,
                                              constraints);
     constraints.close();
-
   }
 
   pcout << "-----------------------------------------------" << std::endl;
@@ -122,19 +122,19 @@ void Heat::setup()
   {
     pcout << "Initializing the matrix-free system" << std::endl;
 
-    additional_data.tasks_parallel_scheme = 
-      MatrixFree<dim, NUMBER>::AdditionalData::none;
-      additional_data.mapping_update_flags = 
+    additional_data.tasks_parallel_scheme =
+        MatrixFree<dim, NUMBER>::AdditionalData::none;
+    additional_data.mapping_update_flags =
         (update_gradients | update_values | update_JxW_values | update_quadrature_points);
-      
-      MappingFE<dim> mapping_local(*fe);
-      mf_storage = std::make_shared<MatrixFree<dim, NUMBER>>();
-      if(dim > 1)
+
+    MappingFE<dim> mapping_local(*fe);
+    mf_storage = std::make_shared<MatrixFree<dim, NUMBER>>();
+    if (dim > 1)
       mf_storage->reinit(mapping_local, dof_handler, constraints,
-                  QGaussSimplex<dim>(r + 1), additional_data);
-      if(dim == 1)
+                         QGaussSimplex<dim>(fe_degree + 1), additional_data);
+    if (dim == 1)
       mf_storage->reinit(mapping_local, dof_handler, constraints,
-                  QGauss<dim>(r + 1), additional_data);
+                         QGauss<dim>(fe_degree + 1), additional_data);
 
     pcout << "  Initializing the system right-hand side" << std::endl;
     mf_storage->initialize_dof_vector(system_rhs);
@@ -147,11 +147,11 @@ void Heat::setup()
 
     mf_operator_lhs.initialize(mf_storage);
     mf_operator_lhs.evaluate_coefficient(mu, b, k);
-    //mf_operator_lhs.set_constraints(constraints);
+    // mf_operator_lhs.set_constraints(constraints);
 
     mf_operator_rhs.initialize(mf_storage);
     mf_operator_rhs.evaluate_coefficient(mu, b, k);
-    //mf_operator_rhs.set_constraints(constraints);
+    // mf_operator_rhs.set_constraints(constraints);
     pcout << "Setup completed" << std::endl;
   }
 }
@@ -241,18 +241,17 @@ void Heat::assemble_rhs(const double &time)
        } */
 
     cell->get_dof_indices(dof_indices);
-    //system_rhs.add(dof_indices, cell_rhs);
-
+    // system_rhs.add(dof_indices, cell_rhs);
 
     constraints.distribute_local_to_global(cell_rhs,
-                                       dof_indices, system_rhs);
+                                           dof_indices, system_rhs);
   }
 
   system_rhs.compress(VectorOperation::add);
 
   // Add the term that comes from the old solution.
-  //rhs_matrix.vmult_add(system_rhs, solution_owned);
-  mf_operator_rhs.vmult_add(system_rhs,solution_owned); 
+  // rhs_matrix.vmult_add(system_rhs, solution_owned);
+  mf_operator_rhs.vmult_add(system_rhs, solution_owned);
   /*for (const auto &entry : boundary_values)
     if (system_rhs.in_local_range(entry.first))
       system_rhs(entry.first) = entry.second;*/
@@ -260,30 +259,42 @@ void Heat::assemble_rhs(const double &time)
 
 void Heat::solve_time_step()
 {
-  SolverControl solver_control(100000, 1e-10 * system_rhs.l2_norm());
-
+  SolverControl solver_control(100000, 1e-6 * system_rhs.l2_norm());
   SolverGMRES<VectorType> solver(solver_control);
-  //TrilinosWrappers::PreconditionILU preconditioner;
-  //preconditioner.initialize(lhs_matrix);
+
+  // Time the linear solve (global wall time)
+  Timer linear_timer(MPI_COMM_WORLD);
+  linear_timer.restart();
+
   solver.solve(mf_operator_lhs, solution_owned, system_rhs, PreconditionIdentity());
+
+  linear_timer.stop();
+  const double this_solve_time = linear_timer.wall_time(); // seconds
+
   constraints.distribute(solution_owned);
-
-  pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
-
   solution = solution_owned;
+
+  const unsigned int iters = solver_control.last_step();
+
+  // Accumulate performance counters
+  total_linear_solve_time += this_solve_time;
+  total_gmres_iterations  += iters;
+
+  pcout << "  " << iters << " GMRES iterations " << std::endl;
+  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 }
+  
 
 void Heat::output(const unsigned int &time_step) const
 {
 
-   IndexSet locally_relevant_dofs;
+  IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
   VectorType solution_ghost(locally_owned_dofs,
-                                               locally_relevant_dofs,
-                                               MPI_COMM_WORLD);
+                            locally_relevant_dofs,
+                            MPI_COMM_WORLD);
   solution_ghost = solution;
-  solution_ghost.update_ghost_values();  // FIXED: Update ghosts
+  solution_ghost.update_ghost_values(); // FIXED: Update ghosts
 
   DataOut<dim> data_out;
   data_out.add_data_vector(dof_handler, solution_ghost, "u");
@@ -301,9 +312,15 @@ void Heat::output(const unsigned int &time_step) const
 
 void Heat::solve()
 {
-  //assemble_matrices();
+  // assemble_matrices();
 
   pcout << "===============================================" << std::endl;
+
+    // Reset performance counters for this run
+  n_time_steps            = 0;
+  total_gmres_iterations  = 0;
+  total_linear_solve_time = 0.0;
+
 
   // Apply the initial condition.
   {
@@ -313,7 +330,15 @@ void Heat::solve()
     solution = solution_owned;
 
     // Output the initial solution.
-    output(0);
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Output");
+      output(0);
+    }
+    else
+    {
+      output(0);
+    }
     pcout << "-----------------------------------------------" << std::endl;
   }
 
@@ -331,9 +356,38 @@ void Heat::solve()
     pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
           << time << ":" << std::flush;
 
-    assemble_rhs(time);
-    solve_time_step();
-    output(time_step);
+    // --- Assemble RHS ---
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Assemble RHS");
+      assemble_rhs(time);
+    }
+    else
+    {
+      assemble_rhs(time);
+    }
+    // --- Linear solve ---
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Linear solve");
+      solve_time_step();
+    }
+    else
+    {
+      solve_time_step();
+    }
+
+        ++n_time_steps;
+
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Output");
+      output(time_step);
+    }
+    else
+    {
+      output(time_step);
+    }
   }
 }
 
@@ -352,11 +406,10 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
   Vector<double> error_per_cell;
 
   VectorType ghosted_solution(locally_owned_dofs,
-                                                 locally_relevant_dofs,
-                                                 MPI_COMM_WORLD);
+                              locally_relevant_dofs,
+                              MPI_COMM_WORLD);
   ghosted_solution = solution;
   ghosted_solution.update_ghost_values();
-
 
   // Use a unique_ptr to hold the correct quadrature rule.
   std::unique_ptr<Quadrature<dim>> quadrature_error;
@@ -364,12 +417,12 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
   if (dim > 1)
   {
     // For 2D/3D simplex meshes, use QGaussSimplex.
-    quadrature_error = std::make_unique<QGaussSimplex<dim>>(r + 3);
+    quadrature_error = std::make_unique<QGaussSimplex<dim>>(fe_degree + 3);
   }
   else
   {
     // For 1D, use QGauss.
-    quadrature_error = std::make_unique<QGauss<dim>>(r + 3);
+    quadrature_error = std::make_unique<QGauss<dim>>(fe_degree + 3);
   }
 
   exact_solution.set_time(time);
@@ -400,4 +453,23 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 
   return error;
+}
+
+double Heat::get_memory_consumption() const
+{
+  // 1. MatrixFree storage
+  double memory_mf = 0.0;
+  if (mf_storage)
+    memory_mf = mf_storage->memory_consumption();
+
+  // 2. Vectors (system_rhs, solution, solution_owned)
+  double memory_vectors = system_rhs.memory_consumption() + solution.memory_consumption() + solution_owned.memory_consumption();
+
+  // 3. Grid + DoFHandler
+  double memory_grid = mesh.memory_consumption() + dof_handler.memory_consumption();
+
+  double local_memory = memory_mf + memory_vectors + memory_grid;
+  double global_memory = Utilities::MPI::sum(local_memory, MPI_COMM_WORLD);
+
+  return global_memory / 1024.0 / 1024.0; // MB
 }

@@ -262,17 +262,24 @@ void Heat::assemble_rhs(const double &time)
 
 void Heat::solve_time_step()
 {
-  SolverControl solver_control(100000, 1e-9 * system_rhs.l2_norm());
+  SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
   SolverGMRES<VectorType> solver(solver_control);
-
-  const auto diag_ptr = mf_operator_lhs.get_matrix_diagonal_inverse();
-  Assert(diag_ptr, ExcMessage("Diagonal not initialized. Did you call compute_diagonal()?"));
 
   // Time the linear solve (global wall time)
   Timer linear_timer(MPI_COMM_WORLD);
   linear_timer.restart();
 
-  solver.solve(mf_operator_lhs, solution_owned, system_rhs, *diag_ptr);
+  if (preconditioner_type == PreconditionerType::Jacobi)
+  {
+    const auto diag_ptr = mf_operator_lhs.get_matrix_diagonal_inverse();
+    Assert(diag_ptr, ExcMessage("Diagonal not initialized. Did you call compute_diagonal()?"));
+    solver.solve(mf_operator_lhs, solution_owned, system_rhs, *diag_ptr);
+  }
+  else // PreconditionerType::None
+  {
+    PreconditionIdentity identity;
+    solver.solve(mf_operator_lhs, solution_owned, system_rhs, identity);
+  }
 
   linear_timer.stop();
   const double this_solve_time = linear_timer.wall_time(); // seconds

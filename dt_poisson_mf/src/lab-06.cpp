@@ -1,62 +1,51 @@
 #include "Heat.hpp"
 #include <deal.II/base/convergence_table.h>
-
 #include <fstream>
 #include <iostream>
 #include <vector>
-// Main function.
-int main(int argc, char *argv[])
+
+using PreType = Heat::PreconditionerType;
+
+struct RunConfig
 {
-  Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
+  PreType      prec;
+  std::string  label;     // for console output
+  std::string  filename;  // CSV filename
+};
+
+void run_time_convergence(const RunConfig &config,
+                          const std::vector<double> &deltat_vals,
+                          const unsigned int N,
+                          const double T,
+                          const double theta,
+                          const unsigned int mpi_rank,
+                          ConditionalOStream &pcout,
+                          const std::shared_ptr<TimerOutput> &timer)
+{
   ConvergenceTable table;
 
-  const std::vector<double> deltat_vals = {0.1,
-                                           0.05,
-                                           0.025,
-                                           0.0125};
-
-  // const std::string  mesh_file_name = "../mesh/mesh-cube-20.msh";
-  const unsigned int N = 500;
-  const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-  ConditionalOStream pcout(std::cout, mpi_rank == 0);
-
-  const double T = 1.0;
-  const double theta = 1.0;
-
-    auto timer = std::make_shared<TimerOutput>(
-      MPI_COMM_WORLD,
-      pcout,
-      TimerOutput::summary,
-      TimerOutput::wall_times);
-
-  Timer setup_timer(MPI_COMM_WORLD);
-  Timer solve_timer(MPI_COMM_WORLD);
-  Timer error_timer(MPI_COMM_WORLD);
-
   std::ofstream convergence_file;
-
   if (mpi_rank == 0)
   {
-    convergence_file.open("convergence_time_dependent.csv");
-    // Similar style as Poisson, but with deltat instead of h
+    convergence_file.open(config.filename);
     convergence_file
-    << "deltat,eL2,eH1,setup_time,"
-    << "total_linear_solve_time,avg_time_per_step,"
-    << "avg_gmres_iters_per_step,dofs_per_second,"
-    << "error_time,memory_MB"
-    << std::endl;
-
+      << "deltat,eL2,eH1,setup_time,"
+      << "total_linear_solve_time,avg_time_per_step,"
+      << "avg_gmres_iters_per_step,dofs_per_second,"
+      << "error_time,memory_MB"
+      << std::endl;
   }
 
-  for (unsigned int i = 0; i < deltat_vals.size(); ++i)
+  Timer setup_timer(MPI_COMM_WORLD);
+  Timer error_timer(MPI_COMM_WORLD);
+
+  for (double deltat : deltat_vals)
   {
-    Heat problem(N, "", T, deltat_vals[i], theta);
-    problem.set_timer(timer); // share the same TimerOutput
+    Heat problem(N, "", T, deltat, theta, config.prec);
+    problem.set_timer(timer);
 
     pcout << "===============================================" << std::endl;
-    pcout << "Running with Δt = " << deltat_vals[i] << std::endl;
-    // using > 100 N, the spatial error is small, you will see that the temperal error dominates
-    // using < 10, spatial error dominates, you will see that the error convergence is hardly satisfactory
+    pcout << "Run = " << config.label << ", Δt = " << deltat << std::endl;
 
     double setup_time = 0.0;
     double error_time = 0.0;
@@ -79,29 +68,22 @@ int main(int argc, char *argv[])
     pcout << "  > Precise Memory (MF + Vecs): " << precise_memory_mb << " MB" << std::endl;
     pcout << "  > System Peak RSS: " << stats.VmHWM / 1024.0 << " MB" << std::endl;
 
-    // --- Time stepping (Heat::solve contains the time loop) ---
-    {
-      //solve_timer.restart();
-      problem.solve();
-      //solve_timer.stop();
-      //solve_time = solve_timer.wall_time();
-    }
+    // --- Time stepping ---
+    problem.solve();
 
-     // --- High-level performance metrics (SC17-style) ---
+    // --- Performance metrics ---
     const unsigned int n_steps = problem.get_n_time_steps();
-    const auto total_lin_time  = problem.get_total_linear_solve_time(); // [s]
-    const auto total_iters     = problem.get_total_gmres_iterations();
+    const double total_lin_time  = problem.get_total_linear_solve_time();
+    const auto total_iters       = problem.get_total_gmres_iterations();
 
     const double avg_time_per_step  = (n_steps > 0 ? total_lin_time / n_steps : 0.0);
     const double avg_iters_per_step = (n_steps > 0 ? static_cast<double>(total_iters) / n_steps : 0.0);
     const double avg_time_per_iter  = (total_iters > 0 ? total_lin_time / static_cast<double>(total_iters) : 0.0);
+    const double dofs_per_second    = (total_lin_time > 0.0
+                                       ? (ndofs * static_cast<double>(n_steps)) / total_lin_time
+                                       : 0.0);
 
-    // DoFs per second (global)
-    const double dofs_per_second = (total_lin_time > 0.0
-                                      ? (ndofs * static_cast<double>(n_steps)) / total_lin_time
-                                      : 0.0);
-
-    pcout << "  --- Performance summary for Δt = " << deltat_vals[i] << " ---\n"
+    pcout << "  --- Performance summary for Δt = " << deltat << " ---\n"
           << "    n_time_steps        = " << n_steps << "\n"
           << "    total DoFs          = " << ndofs << "\n"
           << "    total linear time   = " << total_lin_time << " s\n"
@@ -122,13 +104,14 @@ int main(int argc, char *argv[])
       error_time = error_timer.wall_time();
     }
 
-    table.add_value("deltat", deltat_vals[i]);
-    table.add_value("L2", error_L2);
-    table.add_value("H1", error_H1);
+    table.add_value("deltat", deltat);
+    table.add_value("L2",     error_L2);
+    table.add_value("H1",     error_H1);
     table.add_value("Memory", precise_memory_mb);
+
     if (mpi_rank == 0)
     {
-       convergence_file << deltat_vals[i] << ","
+      convergence_file << deltat << ","
                        << error_L2 << ","
                        << error_H1 << ","
                        << setup_time << ","
@@ -142,24 +125,45 @@ int main(int argc, char *argv[])
     }
   }
 
-  // Only for Exercise 1:
-  // Evaluate slopes in log base 2:
   if (mpi_rank == 0)
   {
     convergence_file.close();
-
-    table.evaluate_all_convergence_rates(
-        ConvergenceTable::reduction_rate_log2);
-
+    table.evaluate_all_convergence_rates(ConvergenceTable::reduction_rate_log2);
     table.set_scientific("L2", true);
     table.set_scientific("H1", true);
-
     std::cout << "===============================================" << std::endl;
+    std::cout << "Convergence table for " << config.label << ":\n";
     table.write_text(std::cout);
   }
+}
 
-  // Print TimerOutput summary at the end
-  //timer.print_summary();
+int main(int argc, char *argv[])
+{
+  Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
+
+  const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  ConditionalOStream pcout(std::cout, mpi_rank == 0);
+
+  //const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125};
+  const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125, 0.00625, 0.003125, 0.0015625};
+
+  const unsigned int N = 500;
+  const double T = 1.0;
+  const double theta = 1.0;
+
+  auto timer = std::make_shared<TimerOutput>(
+    MPI_COMM_WORLD,
+    pcout,
+    TimerOutput::summary,
+    TimerOutput::wall_times);
+
+  std::vector<RunConfig> runs = {
+      {PreType::None,   "NoPreconditioner", "convergence_no_prec.csv"},
+      {PreType::Jacobi, "Jacobi",           "convergence_jacobi.csv"}
+  };
+
+  for (const auto &run : runs)
+    run_time_convergence(run, deltat_vals, N, T, theta, mpi_rank, pcout, timer);
 
   return 0;
 }

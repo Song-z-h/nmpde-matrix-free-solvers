@@ -5,7 +5,7 @@ void Heat::setup()
   pcout << "Initializing the mesh" << std::endl;
 
   Triangulation<dim> serial_hypercube_tria;
-  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N + 1, 0.0, 1.0, true);
+  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
 
   Triangulation<dim> serial_simplex_tria;
   if (dim == 1)
@@ -441,15 +441,15 @@ void Heat::output(const unsigned int &time_step) const
 
 void Heat::solve()
 {
-  assemble_matrices();
-
-  pcout << "===============================================" << std::endl;
-
+  
   // Reset performance counters for this run
   n_time_steps            = 0;
   total_gmres_iterations  = 0;
   total_linear_solve_time = 0.0;
+  
+  assemble_matrices();
 
+  pcout << "===============================================" << std::endl;
   // Apply the initial condition.
   {
     pcout << "Applying the initial condition" << std::endl;
@@ -482,8 +482,8 @@ void Heat::solve()
     beta.set_time(time);
     alpha.set_time(time);
 
-    pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
-          << time << ":" << std::flush;
+   // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
+     //     << time << ":" << std::flush;
 
     // Assemble RHS
     if (timer)
@@ -510,7 +510,7 @@ void Heat::solve()
     ++n_time_steps;
 
     // Output solution
-    if (timer)
+    /*if (timer)
     {
       TimerOutput::Scope t(*timer, "Output");
       output(time_step);
@@ -518,7 +518,7 @@ void Heat::solve()
     else
     {
       output(time_step);
-    }
+    }*/
   }
 }
 
@@ -530,8 +530,8 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
   // quadrature formula. To make sure we are accurate enough, we use a
   // quadrature formula with one node more than what we used in assembly.
 
-  FE_SimplexP<dim> fe_linear(1);
-  MappingFE mapping(fe_linear);
+  //FE_SimplexP<dim> fe_linear(1);
+  //MappingFE mapping(fe_linear);
 
   exact_solution.set_time(time);
   // First we compute the norm on each element, and store it in a vector.

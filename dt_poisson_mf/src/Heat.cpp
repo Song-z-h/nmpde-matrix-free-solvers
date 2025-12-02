@@ -392,7 +392,7 @@ void Heat::solve()
 
         ++n_time_steps;
 
-    if (timer)
+    /*if (timer)
     {
       TimerOutput::Scope t(*timer, "Output");
       output(time_step);
@@ -400,7 +400,7 @@ void Heat::solve()
     else
     {
       output(time_step);
-    }
+    }*/
   }
 }
 

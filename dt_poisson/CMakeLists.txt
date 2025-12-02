@@ -5,3 +5,10 @@ include(../common/cmake-common.cmake)
 
 add_executable(lab-06 src/lab-06.cpp src/Heat.cpp)
 deal_ii_setup_target(lab-06)
+
+
+add_executable(sparse_time_convergence
+  src/sparse_time_convergence.cpp   # whatever you named that last main file
+  src/Heat.cpp
+)
+deal_ii_setup_target(sparse_time_convergence)

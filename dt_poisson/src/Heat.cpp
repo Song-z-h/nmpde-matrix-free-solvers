@@ -381,19 +381,39 @@ void Heat::assemble_rhs(const double &time)
 
 void Heat::solve_time_step()
 {
-  SolverControl solver_control(10000, 1e-12 * system_rhs.l2_norm());
+  SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
 
   SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
-  TrilinosWrappers::PreconditionILU preconditioner;
-  preconditioner.initialize(lhs_matrix);
+  
+
+   TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
+  // (you can tweak jacobi_data.relaxation if you want; default is 1.0)
+
+  TrilinosWrappers::PreconditionJacobi preconditioner;
+  preconditioner.initialize(lhs_matrix, jacobi_data);
+
+
+  // Measure wall time for the linear solve (like MF code)
+  Timer linear_timer(MPI_COMM_WORLD);
+  linear_timer.restart();
+
   solver.solve(lhs_matrix, solution_owned, system_rhs, preconditioner);
+
+  linear_timer.stop();
+  const double this_solve_time = linear_timer.wall_time(); // seconds
+
+  // Accumulate performance counters
+  total_linear_solve_time += this_solve_time;
+  total_gmres_iterations  += solver_control.last_step();
+
   constraints.distribute(solution_owned);
 
-  pcout << "  " << solver_control.last_step() << " GMES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMES residual " << std::endl;
+  //pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
+  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 
   solution = solution_owned;
 }
+
 
 void Heat::output(const unsigned int &time_step) const
 {
@@ -425,6 +445,11 @@ void Heat::solve()
 
   pcout << "===============================================" << std::endl;
 
+  // Reset performance counters for this run
+  n_time_steps            = 0;
+  total_gmres_iterations  = 0;
+  total_linear_solve_time = 0.0;
+
   // Apply the initial condition.
   {
     pcout << "Applying the initial condition" << std::endl;
@@ -433,7 +458,15 @@ void Heat::solve()
     solution = solution_owned;
 
     // Output the initial solution.
-    output(0);
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Output");
+      output(0);
+    }
+    else
+    {
+      output(0);
+    }
     pcout << "-----------------------------------------------" << std::endl;
   }
 
@@ -445,17 +478,50 @@ void Heat::solve()
     time = time_step * deltat;
     if (time > T)
       break;
+
     beta.set_time(time);
     alpha.set_time(time);
 
     pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
           << time << ":" << std::flush;
 
-    assemble_rhs(time);
-    solve_time_step();
-    output(time_step);
+    // Assemble RHS
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Assemble RHS");
+      assemble_rhs(time);
+    }
+    else
+    {
+      assemble_rhs(time);
+    }
+
+    // Linear solve
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Linear solve");
+      solve_time_step();
+    }
+    else
+    {
+      solve_time_step();
+    }
+
+    ++n_time_steps;
+
+    // Output solution
+    if (timer)
+    {
+      TimerOutput::Scope t(*timer, "Output");
+      output(time_step);
+    }
+    else
+    {
+      output(time_step);
+    }
   }
 }
+
 
 double
 Heat::compute_error(const VectorTools::NormType &norm_type)
@@ -519,4 +585,31 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 
   return error;
+}
+
+
+double Heat::get_memory_consumption() const
+{
+  // 1. Matrices
+  double memory_matrices =
+    mass_matrix.memory_consumption() +
+    stiffness_matrix.memory_consumption() +
+    lhs_matrix.memory_consumption() +
+    rhs_matrix.memory_consumption();
+
+  // 2. Vectors
+  double memory_vectors =
+    system_rhs.memory_consumption() +
+    solution_owned.memory_consumption() +
+    solution.memory_consumption();
+
+  // 3. Grid + DoFHandler
+  double memory_grid =
+    mesh.memory_consumption() +
+    dof_handler.memory_consumption();
+
+  double local_memory  = memory_matrices + memory_vectors + memory_grid;
+  double global_memory = Utilities::MPI::sum(local_memory, MPI_COMM_WORLD);
+
+  return global_memory / 1024.0 / 1024.0; // MB
 }

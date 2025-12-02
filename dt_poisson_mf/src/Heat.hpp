@@ -173,7 +173,27 @@ public:
       const double x = p[0];
       const double t = get_time();
       return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
-    }
+      /*
+      const double pi2 = numbers::PI / 2.0;
+    const double x   = p[0];
+    const double t   = this->get_time();
+
+    // Must match your coefficient classes:
+    const double eps   = 1e-3;   // DiffusionCoefficient
+    const double beta0 = 50.0;   // AdvectionCoefficient: beta0*(x-1)
+    const double k     = 0.0;    // ReactionCoefficient
+
+    return
+        // u_t
+        pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
+        // -eps u_xx + (beta0 + k) u
+      + (eps * pi2 * pi2 + beta0 + k)
+          * std::sin(pi2 * x) * std::sin(pi2 * t)
+        // beta0 (x-1) u_x
+      + beta0 * pi2 * (x - 1.0)
+          * std::cos(pi2 * x) * std::sin(pi2 * t);
+          */
+      }
   };
 
   // Function for the initial condition.

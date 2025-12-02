@@ -145,7 +145,7 @@ int main(int argc, char *argv[])
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
   //const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125};
-  const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125, 0.00625, 0.003125, 0.0015625};
+  const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125, 0.00625, 0.003125};
 
   const unsigned int N = 500;
   const double T = 1.0;

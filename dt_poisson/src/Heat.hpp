@@ -34,8 +34,14 @@
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <deal.II/base/timer.h>
+#include <deal.II/base/utilities.h>
+
 #include <fstream>
 #include <iostream>
+
+#include <memory>
+#include <iomanip>
 
 using namespace dealii;
 
@@ -226,6 +232,31 @@ public:
   double
   compute_error(const VectorTools::NormType &norm_type);
 
+
+  // Optional shared TimerOutput (non-owning)
+  void set_timer(const std::shared_ptr<TimerOutput> &timer_)
+  {
+    timer = timer_;
+  }
+
+  // High-level performance stats (for convergence driver)
+  unsigned int       get_n_time_steps() const        { return n_time_steps; }
+  unsigned long long get_total_gmres_iterations() const
+  {
+    return total_gmres_iterations;
+  }
+  double             get_total_linear_solve_time() const
+  {
+    return total_linear_solve_time;
+  }
+
+  // Number of degrees of freedom
+  unsigned int get_number_of_dofs() const { return dof_handler.n_dofs(); }
+
+  // Memory usage in MB
+  double get_memory_consumption() const;
+
+
 protected:
   // Assemble the mass and stiffness matrices.
   void
@@ -347,6 +378,14 @@ protected:
   std::map<types::global_dof_index, double> boundary_values;
 
   AffineConstraints<double> constraints;
+
+
+  std::shared_ptr<TimerOutput> timer;
+
+  // NEW: high-level performance counters
+  unsigned int       n_time_steps            = 0;
+  unsigned long long total_gmres_iterations  = 0;
+  double             total_linear_solve_time = 0.0; // [s]
 
 };
 

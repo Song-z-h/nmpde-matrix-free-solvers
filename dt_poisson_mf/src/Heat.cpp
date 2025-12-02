@@ -293,8 +293,8 @@ void Heat::solve_time_step()
   total_linear_solve_time += this_solve_time;
   total_gmres_iterations  += iters;
 
-  pcout << "  " << iters << " GMRES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
+  //pcout << "  " << iters << " GMRES iterations " << std::endl;
+  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 }
 
 
@@ -366,8 +366,8 @@ void Heat::solve()
     beta.set_time(time);
     alpha.set_time(time);
 
-    pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
-          << time << ":" << std::flush;
+   // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
+     //     << time << ":" << std::flush;
 
     // --- Assemble RHS ---
     if (timer)

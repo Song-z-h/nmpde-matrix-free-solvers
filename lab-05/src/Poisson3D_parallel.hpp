@@ -221,6 +221,19 @@ public:
 
   double get_memory_consumption() const;
 
+    // --- HPC metrics helpers ---
+  unsigned int
+  get_last_cg_iterations() const
+  {
+    return last_cg_iterations;
+  }
+
+  double
+  get_number_of_dofs() const
+  {
+    return dof_handler.n_dofs();
+  }
+
 
 public:
   // Path to the mesh file.
@@ -277,6 +290,10 @@ public:
   IndexSet locally_relevant_dofs;
 
   AffineConstraints<double> constraints;
+
+   // HPC statistics
+  unsigned int last_cg_iterations = 0;
+  double       last_cg_residual   = 0.0;
 };
 
 #endif

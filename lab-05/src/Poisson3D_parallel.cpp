@@ -224,16 +224,24 @@ void Poisson3DParallelMf::solve()
   // preconditioner.initialize(
   // system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
 
-  TrilinosWrappers::PreconditionJacobi preconditioner;
-  preconditioner.initialize(system_matrix);
-
-  //TrilinosWrappers::PreconditionAMG preconditioner;
-  //pcout << "  Initializing AMG..." << std::endl;
+  //TrilinosWrappers::PreconditionJacobi preconditioner;
   //preconditioner.initialize(system_matrix);
+   // AMG preconditioner
+  /*TrilinosWrappers::PreconditionAMG::AdditionalData amg_data;
+  amg_data.elliptic              = true;   // Poisson-type
+  amg_data.higher_order_elements = true;   // Q3
+  amg_data.smoother_sweeps       = 2;
+  amg_data.aggregation_threshold = 0.02;
 
+  TrilinosWrappers::PreconditionAMG preconditioner;
+  preconditioner.initialize(system_matrix, amg_data);
+*/
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, preconditioner);
+  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
   constraints.distribute(solution);
+
+    last_cg_iterations = solver_control.last_step();
+  last_cg_residual   = solver_control.last_value();
 
   pcout << "  " << solver_control.last_step() << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;
 }

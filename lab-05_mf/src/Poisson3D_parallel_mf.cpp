@@ -6,7 +6,7 @@ void Poisson3DParallelMf::setup()
   pcout << "Initializing the mesh (Hypercube Generator)" << std::endl;
 
   GridGenerator::subdivided_hyper_cube(mesh, N, 0.0, 1.0);
-  mesh.refine_global(1);
+  // mesh.refine_global(1);
 
   pcout << "  Subdivisions per axis: " << N << std::endl;
   pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
@@ -57,9 +57,9 @@ void Poisson3DParallelMf::setup()
   // --- Global MatrixFree + operator (one level) ---
   {
     additional_data.tasks_parallel_scheme =
-      MatrixFree<dim, Number>::AdditionalData::none;
+        MatrixFree<dim, Number>::AdditionalData::none;
     additional_data.mapping_update_flags =
-      (update_gradients | update_values | update_JxW_values | update_quadrature_points);
+        (update_gradients | update_values | update_JxW_values | update_quadrature_points);
     // additional_data.mg_level left at default: global operator
 
     MappingQ1<dim> mapping_global;
@@ -82,9 +82,10 @@ void Poisson3DParallelMf::setup()
     pcout << "  Evaluating coefficients..." << std::endl;
     mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
   }
-
   // --- Geometric Multigrid setup (matrix-free on all levels) ---
   {
+    if(use_gmg)
+    {
     pcout << "  Setting up Multigrid..." << std::endl;
 
     // A. MG DoFs + constraints
@@ -99,7 +100,8 @@ void Poisson3DParallelMf::setup()
     mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, boundary_ids);
 
     // B. Level containers
-    const unsigned int n_levels = dof_handler.get_triangulation().n_global_levels();
+    const unsigned int n_levels =
+        dof_handler.get_triangulation().n_global_levels();
 
     mg_mf_storage.resize(0, n_levels - 1);
     mg_matrices.resize(0, n_levels - 1);
@@ -114,22 +116,21 @@ void Poisson3DParallelMf::setup()
 
     for (unsigned int level = 0; level < n_levels; ++level)
     {
-      // MatrixFree AdditionalData for this level
       typename MatrixFree<dim, Number>::AdditionalData level_data;
       level_data.tasks_parallel_scheme =
-        MatrixFree<dim, Number>::AdditionalData::none;
+          MatrixFree<dim, Number>::AdditionalData::none;
       level_data.mapping_update_flags =
-        (update_gradients | update_values | update_JxW_values |
-         update_quadrature_points);
+          (update_gradients | update_values | update_JxW_values |
+           update_quadrature_points);
       level_data.mg_level = level;
 
-      // Level constraints: use what MGConstrainedDoFs built for us
+      // Level constraints from MGConstrainedDoFs
       const AffineConstraints<double> &level_constraints =
-        mg_constrained_dofs.get_level_constraints(level);
+          mg_constrained_dofs.get_level_constraints(level);
 
-      // Create and init MatrixFree object on this level
       std::shared_ptr<MatrixFree<dim, Number>> mf_level(
-        new MatrixFree<dim, Number>());
+          new MatrixFree<dim, Number>());
+
       mf_level->reinit(mapping_mg,
                        dof_handler,
                        level_constraints,
@@ -138,13 +139,13 @@ void Poisson3DParallelMf::setup()
 
       mg_mf_storage[level] = mf_level;
 
-      // Level operator (Laplace)
+      // Level operator
       mg_matrices[level].clear();
       mg_matrices[level].initialize(mf_level, mg_constrained_dofs, level);
 
-      // Level-dependent coefficients (here just constant)
+      // Level-dependent coefficients (here constant)
       DiffusionCoefficient<dim> diff_lvl;
-      ReactionCoefficient<dim>  react_lvl;
+      ReactionCoefficient<dim> react_lvl;
       mg_matrices[level].evaluate_coefficient(diff_lvl, react_lvl);
 
       // Diagonal for Chebyshev smoother
@@ -152,14 +153,15 @@ void Poisson3DParallelMf::setup()
 
       // Smoother parameters (Chebyshev)
       typename SmootherType::AdditionalData data;
-      data.smoothing_range       = 15.0;
-      data.degree                = 5;
-      data.eig_cg_n_iterations   = 10;
-      data.preconditioner        = mg_matrices[level].get_matrix_diagonal_inverse();
+      data.smoothing_range = 15.0;
+      data.degree = 5;
+      data.eig_cg_n_iterations = 10;
+      data.preconditioner =
+          mg_matrices[level].get_matrix_diagonal_inverse();
 
       smoother_data_container[level] = data;
 
-      // Interface operator for this level (used for edge matrices)
+      // Interface operator for this level
       mg_interface_matrices[level].initialize(mg_matrices[level]);
     }
 
@@ -170,17 +172,13 @@ void Poisson3DParallelMf::setup()
     // E. Matrix wrappers (volume + interface operators)
     mg_matrix_wrapper.initialize(mg_matrices);
     mg_interface_wrapper.initialize(mg_interface_matrices);
-
-    // (No MGTransferMatrixFree here; we build it in solve() so we can rebuild
-    //  easily on each new mesh.)
   }
-
+}
   // Simple memory report
   const double memory_mb = get_memory_consumption();
   pcout << "  > Precise Memory (MF + Vecs): " << std::fixed << std::setprecision(4)
         << memory_mb << " MB" << std::endl;
 }
-
 
 void Poisson3DParallelMf::assemble()
 {
@@ -229,9 +227,9 @@ void Poisson3DParallelMf::solve()
   b.update_ghost_values();
 
   // Choose which preconditioner to test:
-  const bool use_gmg = true;   // <-- flip this to false for Identity baseline
+  //const bool use_gmg = false; // <-- flip this to false for Identity baseline
 
-  SolverControl solver_control(1000, 1e-8 * b.l2_norm());
+  SolverControl solver_control(50000, 1e-8 * b.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
   if (!use_gmg)
@@ -244,11 +242,12 @@ void Poisson3DParallelMf::solve()
   {
     pcout << "Solving with global matrix-free operator (GMG preconditioner)" << std::endl;
 
-    // --- GMG preconditioner path (your current code) ---
+    // Build transfer operator
     MGTransferMatrixFree<dim, Number> mg_transfer(mg_constrained_dofs);
     mg_transfer.build(dof_handler);
 
-    SolverControl coarse_control(1000, 1e-12, false, false);
+    // Coarse grid solver
+    SolverControl coarse_control(50000, 1e-8, false, false);
     SolverCG<VectorType> coarse_solver(coarse_control);
     PreconditionIdentity identity;
 
@@ -258,13 +257,20 @@ void Poisson3DParallelMf::solve()
                                 PreconditionIdentity>
       coarse_grid(coarse_solver, mg_matrices[0], identity);
 
+    // Matrix wrappers for MG
     mg::Matrix<VectorType> mg_m(mg_matrices);
+
+    // Interface matrices (use what you built in setup())
+    mg::Matrix<VectorType> mg_interface(mg_interface_matrices);
 
     Multigrid<VectorType> mg(mg_m,
                              coarse_grid,
                              mg_transfer,
                              mg_smoother,
                              mg_smoother);
+
+    // Attach interface operators (important once you have hanging nodes / adaptivity)
+    mg.set_edge_matrices(mg_interface, mg_interface);
 
     PreconditionMG<dim, VectorType, MGTransferMatrixFree<dim, Number>>
       preconditioner(dof_handler, mg, mg_transfer);
@@ -275,10 +281,11 @@ void Poisson3DParallelMf::solve()
   constraints.distribute(x);
   solution = x;
 
+  last_cg_iterations = solver_control.last_step();
+  last_cg_residual = solver_control.last_value();
+
   pcout << "  CG iterations: " << solver_control.last_step() << std::endl;
 }
-
-
 
 void Poisson3DParallelMf::output() const
 {

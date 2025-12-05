@@ -1,21 +1,45 @@
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/timer.h>
+#include <deal.II/base/utilities.h>
+
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include <deal.II/base/utilities.h> // Needed for System Memory stats
+#include <cstdlib> // std::atoi
 
 #include "Poisson3D_parallel_mf.hpp"
+
+using namespace dealii;
 
 int main(int argc, char *argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  const unsigned int nprocs   = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
-  std::vector<int> mesh_Ns = {5, 10, 20, 40};
+  // ----------------------------
+  // Strong-scaling parameters
+  // ----------------------------
+  int N = 40; // default global subdivisions per axis
+  if (argc > 1)
+    N = std::atoi(argv[1]);
 
-  TimerOutput timer(MPI_COMM_WORLD, pcout, TimerOutput::summary, TimerOutput::wall_times);
+  std::string csv_name = "strong_scaling_mf.csv";
+  if (argc > 2 && mpi_rank == 0)
+    csv_name = argv[2];
+
+  pcout << "Strong scaling run (matrix-free):" << std::endl;
+  pcout << "  N      = " << N << std::endl;
+  pcout << "  nprocs = " << nprocs << std::endl;
+
+  // Single problem size (strong scaling)
+  std::vector<int> mesh_Ns = {N};
+
+  TimerOutput timer(MPI_COMM_WORLD,
+                    pcout,
+                    TimerOutput::summary,
+                    TimerOutput::wall_times);
 
   Timer setup_timer(MPI_COMM_WORLD);
   Timer assemble_timer(MPI_COMM_WORLD);
@@ -28,25 +52,31 @@ int main(int argc, char *argv[])
   std::ofstream convergence_file;
   if (mpi_rank == 0)
   {
-    convergence_file.open("convergence.csv");
-    // <--- NEW: Added "memory_MB" to header
+    convergence_file.open(csv_name);
     convergence_file
-        << "h,ndofs,eL2,eH1,"
-        << "setup_time,assemble_time,solve_time,output_time,error_time,total_time,"
-        << "memory_MB,memory_MB_per_dof,"
-        << "cg_iters,avg_time_per_iter,"
-        << "dofs_per_second,million_dofs_per_second,dofs_per_second_per_core"
-        << std::endl;
+      << "nprocs,N,h,ndofs,eL2,eH1,"
+      << "setup_time,assemble_time,solve_time,output_time,error_time,total_time,"
+      << "memory_MB,memory_MB_per_dof,"
+      << "cg_iters,avg_time_per_iter,"
+      << "dofs_per_second,million_dofs_per_second,dofs_per_second_per_core"
+      << std::endl;
   }
 
-  for (unsigned int i = 0; i < mesh_Ns.size(); i++)
+  for (unsigned int i = 0; i < mesh_Ns.size(); ++i)
   {
-    pcout << "Mesh size " << mesh_Ns[i] << std::endl;
+    const int N_current = mesh_Ns[i];
+    pcout << "-------------------------------------------------" << std::endl;
+    pcout << "Mesh size N = " << N_current << std::endl;
 
-    Poisson3DParallelMf problem(mesh_Ns[i]);
+    Poisson3DParallelMf problem(N_current);
 
-    double setup_time, assemble_time, solve_time, output_time, error_time;
+    double setup_time   = 0.0;
+    double assemble_time= 0.0;
+    double solve_time   = 0.0;
+    double output_time  = 0.0;
+    double error_time   = 0.0;
 
+    // Setup
     {
       TimerOutput::Scope t(timer, "Setup");
       setup_timer.start();
@@ -55,14 +85,15 @@ int main(int argc, char *argv[])
       setup_timer.stop();
     }
 
-    double precise_memory_mb = problem.get_memory_consumption();
-
+    // Memory
+    const double precise_memory_mb = problem.get_memory_consumption();
     Utilities::System::MemoryStats stats;
     Utilities::System::get_memory_stats(stats);
 
     pcout << "  > Precise Memory (MF + Vecs): " << precise_memory_mb << " MB" << std::endl;
-    pcout << "  > System Peak RSS: " << stats.VmHWM / 1024.0 << " MB" << std::endl;
+    pcout << "  > System Peak RSS:           " << stats.VmHWM / 1024.0 << " MB" << std::endl;
 
+    // Assemble (RHS)
     {
       TimerOutput::Scope t(timer, "Assemble");
       assemble_timer.start();
@@ -70,6 +101,8 @@ int main(int argc, char *argv[])
       assemble_time = assemble_timer.wall_time();
       assemble_timer.stop();
     }
+
+    // Solve
     {
       TimerOutput::Scope t(timer, "Solve");
       solve_timer.start();
@@ -77,6 +110,8 @@ int main(int argc, char *argv[])
       solve_time = solve_timer.wall_time();
       solve_timer.stop();
     }
+
+    // Output
     {
       TimerOutput::Scope t(timer, "Output");
       output_timer.start();
@@ -85,8 +120,9 @@ int main(int argc, char *argv[])
       output_timer.stop();
     }
 
-    const double h = 1.0 / (mesh_Ns[i]);
-    double error_L2, error_H1;
+    // Error
+    const double h = 1.0 / static_cast<double>(N_current);
+    double error_L2 = 0.0, error_H1 = 0.0;
     {
       TimerOutput::Scope t(timer, "ErrorComputation");
       error_timer.start();
@@ -96,32 +132,30 @@ int main(int argc, char *argv[])
       error_timer.stop();
     }
 
-    // --- NEW: HPC metrics ---
-    const double ndofs = problem.get_number_of_dofs();
+    // HPC metrics
+    const double       ndofs    = problem.get_number_of_dofs();
     const unsigned int cg_iters = problem.get_last_cg_iterations();
 
     const double total_time =
-        setup_time + assemble_time + solve_time + output_time + error_time;
+      setup_time + assemble_time + solve_time + output_time + error_time;
 
-    double dofs_per_second = 0.0;
-    double avg_time_per_iter = 0.0;
-    double million_dofs_per_second = 0.0;
-    double dofs_per_second_per_core = 0.0;
+    double dofs_per_second           = 0.0;
+    double avg_time_per_iter         = 0.0;
+    double million_dofs_per_second   = 0.0;
+    double dofs_per_second_per_core  = 0.0;
 
     if (solve_time > 0.0 && cg_iters > 0)
     {
-      // For MF CG, cost ~ ndofs * iterations, same as matrix-based
       dofs_per_second = (ndofs * static_cast<double>(cg_iters)) / solve_time;
       avg_time_per_iter = solve_time / static_cast<double>(cg_iters);
       million_dofs_per_second = dofs_per_second / 1e6;
-      dofs_per_second_per_core =
-          dofs_per_second / Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+      dofs_per_second_per_core = dofs_per_second / static_cast<double>(nprocs);
     }
 
     const double memory_per_dof =
-        (ndofs > 0.0) ? (precise_memory_mb / ndofs) : 0.0;
+      (ndofs > 0.0) ? (precise_memory_mb / ndofs) : 0.0;
 
-    // ConvergenceTable columns (for pretty console output)
+    // ConvergenceTable (nice console print)
     table.add_value("h", h);
     table.add_value("ndofs", ndofs);
     table.add_value("L2", error_L2);
@@ -134,7 +168,9 @@ int main(int argc, char *argv[])
     // CSV line
     if (mpi_rank == 0)
     {
-      convergence_file << h << ","
+      convergence_file << nprocs << ","
+                       << N_current << ","
+                       << h << ","
                        << ndofs << ","
                        << error_L2 << ","
                        << error_H1 << ","
@@ -158,10 +194,10 @@ int main(int argc, char *argv[])
   if (mpi_rank == 0)
   {
     convergence_file.close();
-    table.evaluate_all_convergence_rates(ConvergenceTable::reduction_rate_log2);
     table.set_scientific("L2", true);
     table.set_scientific("H1", true);
     table.write_text(std::cout);
   }
+
   return 0;
 }

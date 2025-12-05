@@ -32,7 +32,13 @@ int main(int argc, char *argv[])
   {
     convergence_file.open("convergence.csv");
     // <--- NEW: Added "memory_MB" to the header
-    convergence_file << "h,eL2,eH1,setup_time,assemble_time,solve_time,output_time,error_time,memory_MB" << std::endl;
+convergence_file
+  << "h,ndofs,eL2,eH1,"
+  << "setup_time,assemble_time,solve_time,output_time,error_time,total_time,"
+  << "memory_MB,memory_MB_per_dof,"
+  << "cg_iters,avg_time_per_iter,"
+  << "dofs_per_second,million_dofs_per_second,dofs_per_second_per_core"
+  << std::endl;
   }
 
   for (unsigned int i = 0; i < mesh_Ns.size(); i++)
@@ -89,34 +95,75 @@ int main(int argc, char *argv[])
     }
 
     const double h = 1.0 / (mesh_Ns[i]);
-    double error_L2, error_H1;
-    {
-      TimerOutput::Scope t(timer, "ErrorComputation");
-      error_timer.start();
-      error_L2 = problem.compute_error(VectorTools::L2_norm);
-      error_H1 = problem.compute_error(VectorTools::H1_norm);
-      error_time = error_timer.wall_time();
-      error_timer.stop();
-    }
+double error_L2, error_H1;
+{
+  TimerOutput::Scope t(timer, "ErrorComputation");
+  error_timer.start();
+  error_L2 = problem.compute_error(VectorTools::L2_norm);
+  error_H1 = problem.compute_error(VectorTools::H1_norm);
+  error_time = error_timer.wall_time();
+  error_timer.stop();
+}
 
-    table.add_value("h", h);
-    table.add_value("L2", error_L2);
-    table.add_value("H1", error_H1);
-    table.add_value("Memory", precise_memory_mb); // Add to console table
+// --- NEW: HPC metrics ---
+const double       ndofs    = problem.get_number_of_dofs();
+const unsigned int cg_iters = problem.get_last_cg_iterations();
 
-    // <--- NEW: Write memory to the CSV file
-    if (mpi_rank == 0)
-    {
-      convergence_file << h << "," 
-                       << error_L2 << "," 
-                       << error_H1 << ","
-                       << setup_time << "," 
-                       << assemble_time << "," 
-                       << solve_time << ","
-                       << output_time << "," 
-                       << error_time << ","
-                       << precise_memory_mb << std::endl; // <--- Memory added here
-    }
+// total wall time (just from the timers in main)
+const double total_time =
+  setup_time + assemble_time + solve_time + output_time + error_time;
+
+double dofs_per_second        = 0.0;
+double avg_time_per_iter      = 0.0;
+double million_dofs_per_second = 0.0;
+double dofs_per_second_per_core = 0.0;
+
+if (solve_time > 0.0 && cg_iters > 0)
+{
+  // total work ~ ndofs * iterations (for CG with matrix-based operator)
+  dofs_per_second = (ndofs * static_cast<double>(cg_iters)) / solve_time;
+  avg_time_per_iter = solve_time / static_cast<double>(cg_iters);
+  million_dofs_per_second = dofs_per_second / 1e6;
+  dofs_per_second_per_core =
+    dofs_per_second / Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+}
+
+// memory per DoF (MB/DoF)
+const double memory_per_dof = (ndofs > 0.0) ? (precise_memory_mb / ndofs) : 0.0;
+
+// Add to console ConvergenceTable (you can adjust which fields you want here)
+table.add_value("h", h);
+table.add_value("ndofs", ndofs);
+table.add_value("L2", error_L2);
+table.add_value("H1", error_H1);
+table.add_value("Memory_MB", precise_memory_mb);
+table.add_value("Mem/DoF", memory_per_dof);
+table.add_value("CG_iters", cg_iters);
+table.add_value("DoFs/s[1e6]", million_dofs_per_second);
+
+// --- CSV output ---
+if (mpi_rank == 0)
+{
+  convergence_file << h << ","
+                   << ndofs << ","
+                   << error_L2 << ","
+                   << error_H1 << ","
+                   << setup_time << ","
+                   << assemble_time << ","
+                   << solve_time << ","
+                   << output_time << ","
+                   << error_time << ","
+                   << total_time << ","
+                   << precise_memory_mb << ","
+                   << memory_per_dof << ","
+                   << cg_iters << ","
+                   << avg_time_per_iter << ","
+                   << dofs_per_second << ","
+                   << million_dofs_per_second << ","
+                   << dofs_per_second_per_core
+                   << std::endl;
+}
+   
   }
 
   if (mpi_rank == 0)

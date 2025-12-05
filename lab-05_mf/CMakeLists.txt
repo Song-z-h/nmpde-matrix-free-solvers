@@ -8,3 +8,15 @@ include(../common/cmake-common.cmake)
 
  add_executable(lab-05_parallel src/lab-05_parallel.cpp src/Poisson3D_parallel_mf.cpp)
  deal_ii_setup_target(lab-05_parallel)
+
+ add_executable(poisson_mf_strong
+  src/poisson_mf_strong.cpp       # new main for MF strong scaling
+  src/Poisson3D_parallel_mf.cpp   # MF implementation
+)
+deal_ii_setup_target(poisson_mf_strong)
+
+
+add_executable(lab-05_weak_mf
+  src/lab-05_weak_mf.cpp
+  src/Poisson3D_parallel_mf.cpp)
+deal_ii_setup_target(lab-05_weak_mf)

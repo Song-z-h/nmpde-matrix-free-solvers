@@ -8,3 +8,16 @@ include(../common/cmake-common.cmake)
 
  add_executable(lab-05_parallel src/lab-05_parallel.cpp src/Poisson3D_parallel.cpp)
  deal_ii_setup_target(lab-05_parallel)
+
+
+ add_executable(poisson_mat_strong
+  src/poisson_mat_strong.cpp      # new main for matrix-based strong scaling
+  src/Poisson3D_parallel.cpp      # matrix-based implementation
+)
+deal_ii_setup_target(poisson_mat_strong)
+
+
+add_executable(lab-05_weak_mat
+  src/lab-05_weak_mat.cpp
+  src/Poisson3D_parallel.cpp)
+deal_ii_setup_target(lab-05_weak_mat)

@@ -61,7 +61,8 @@ class Poisson3DParallelMf
 public:
   // Physical dimension (1D, 2D, 3D)
   static constexpr unsigned int dim = 3;
-  static constexpr unsigned int fe_degree = 2;
+  static constexpr unsigned int fe_degree = 3;
+  static constexpr bool use_gmg = false;
   using Number = double;
   using VectorType = LinearAlgebra::distributed::Vector<Number>; // same as solution/rhs
 
@@ -369,7 +370,7 @@ public:
     {
       const unsigned int cell = fe.get_current_cell_index();
 
-      fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+      //fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
       for (unsigned int q : fe.quadrature_point_indices())
       {
         fe.submit_gradient(diffusion_coefficient(cell, q) * fe.get_gradient(q), q);
@@ -418,7 +419,7 @@ public:
         AssertDimension(reaction_coefficient.size(1), fe_eval.n_q_points);
 
         fe_eval.reinit(cell);
-        fe_eval.read_dof_values_plain(src);
+        fe_eval.read_dof_values(src);
         fe_eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
         for (const unsigned int q : fe_eval.quadrature_point_indices())
@@ -500,6 +501,19 @@ public:
 
   double get_memory_consumption() const;
 
+    // --- HPC metrics helpers ---
+  unsigned int
+  get_last_cg_iterations() const
+  {
+    return last_cg_iterations;
+  }
+
+  double
+  get_number_of_dofs() const
+  {
+    return dof_handler.n_dofs();
+  }
+
 protected:
   // Path to the mesh file.
   // const std::string mesh_file_name;
@@ -577,6 +591,10 @@ protected:
   MatrixFreeLaplaceOperator<dim, fe_degree, Number> mf_operator;
 
   typename MatrixFree<dim, Number>::AdditionalData additional_data;
+
+    // --- HPC statistics (for reporting) ---
+  unsigned int last_cg_iterations = 0;
+  double       last_cg_residual   = 0.0;
 
   class DiagonalPreconditioner : public Subscriptor
   {

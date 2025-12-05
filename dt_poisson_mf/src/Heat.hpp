@@ -55,7 +55,7 @@ class Heat
 
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 1;
+  static constexpr unsigned int dim = 2;
   static constexpr unsigned int fe_degree = 2;
 
   using NUMBER = double;
@@ -385,7 +385,7 @@ public:
 
     // void set_constraints(const AffineConstraints<number> &c) {}
 
-    void local_compute_diagonal(
+   void local_compute_diagonal(
         FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &phi) const
     {
       const unsigned int cell = phi.get_current_cell_index();

@@ -396,7 +396,7 @@ void Heat::solve_time_step()
   Timer linear_timer(MPI_COMM_WORLD);
   linear_timer.restart();
 
-  solver.solve(lhs_matrix, solution_owned, system_rhs, PreconditionIdentity());
+  solver.solve(lhs_matrix, solution_owned, system_rhs, preconditioner);
 
   linear_timer.stop();
   const double this_solve_time = linear_timer.wall_time(); // seconds

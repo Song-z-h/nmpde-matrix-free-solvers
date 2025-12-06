@@ -169,45 +169,44 @@ public:
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      //2d
+      // 2d
       /*const double pi2 = M_PI / 2.0;
       const double x = p[0];
       const double t = get_time();
       return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
       */
-      
-     //symmetric version
+
+      // symmetric version
       const double pi2 = M_PI / 2.0;
-    const double x   = p[0];
-    const double t   = this->get_time();
+      const double x = p[0];
+      const double t = this->get_time();
 
-    const double mu = 1.0; // must match DiffusionCoefficient
-    const double k  = 1.0; // must match ReactionCoefficient
+      const double mu = 1.0; // must match DiffusionCoefficient
+      const double k = 1.0;  // must match ReactionCoefficient
 
-    return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
-           + (mu * pi2 * pi2 + k) *
-               std::sin(pi2 * x) * std::sin(pi2 * t);
-      //1d
-     /* const double pi2 = numbers::PI / 2.0;
-    const double x   = p[0];
-    const double t   = this->get_time();
+      return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t) + (mu * pi2 * pi2 + k) *
+                                                               std::sin(pi2 * x) * std::sin(pi2 * t);
+      // 1d
+      /* const double pi2 = numbers::PI / 2.0;
+     const double x   = p[0];
+     const double t   = this->get_time();
 
-    // Must match your coefficient classes:
-    const double eps   = 1e-3;   // DiffusionCoefficient
-    const double beta0 = 50.0;   // AdvectionCoefficient: beta0*(x-1)
-    const double k     = 0.0;    // ReactionCoefficient
+     // Must match your coefficient classes:
+     const double eps   = 1e-3;   // DiffusionCoefficient
+     const double beta0 = 50.0;   // AdvectionCoefficient: beta0*(x-1)
+     const double k     = 0.0;    // ReactionCoefficient
 
-    return
-        // u_t
-        pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
-        // -eps u_xx + (beta0 + k) u
-      + (eps * pi2 * pi2 + beta0 + k)
-          * std::sin(pi2 * x) * std::sin(pi2 * t)
-        // beta0 (x-1) u_x
-      + beta0 * pi2 * (x - 1.0)
-          * std::cos(pi2 * x) * std::sin(pi2 * t);
-          */
-      }
+     return
+         // u_t
+         pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
+         // -eps u_xx + (beta0 + k) u
+       + (eps * pi2 * pi2 + beta0 + k)
+           * std::sin(pi2 * x) * std::sin(pi2 * t)
+         // beta0 (x-1) u_x
+       + beta0 * pi2 * (x - 1.0)
+           * std::cos(pi2 * x) * std::sin(pi2 * t);
+           */
+    }
   };
 
   // Function for the initial condition.
@@ -329,35 +328,27 @@ public:
     // must implement
     virtual void compute_diagonal() override
     {
-      LinearAlgebra::distributed::Vector<number> diagonal;
-      this->data->initialize_dof_vector(diagonal);
-      diagonal = 0.0;
-
-      // Compute diagonal by applying the operator to basis vectors
-      MatrixFreeTools::compute_diagonal(*this->data,
-                                        diagonal,
-                                        &TimeStepOperator::local_compute_diagonal,
-                                        this);
-
-      // Enforce constraints (Dirichlet etc.)
-      this->set_constrained_entries_to_one(diagonal);
-
-      // Build inverse_diagonal_entries as in the Poisson case
       this->inverse_diagonal_entries.reset(
-          new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>(diagonal));
-
-      LinearAlgebra::distributed::Vector<number> &inv_vec =
+          new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>());
+      LinearAlgebra::distributed::Vector<number> &inverse_diagonal =
           this->inverse_diagonal_entries->get_vector();
+      this->data->initialize_dof_vector(inverse_diagonal);
+      unsigned int dummy = 0;
+      this->data->cell_loop(&TimeStepOperator::local_compute_diagonal,
+                            this,
+                            inverse_diagonal,
+                            dummy);
 
-      for (unsigned int i = 0; i < inv_vec.local_size(); ++i)
+      this->set_constrained_entries_to_one(inverse_diagonal);
+
+      for (unsigned int i = 0; i < inverse_diagonal.locally_owned_size(); ++i)
       {
-        const number v = inv_vec.local_element(i);
-        if (std::abs(v) < 1e-16)
-          inv_vec.local_element(i) = static_cast<number>(1.0);
-        else
-          inv_vec.local_element(i) = static_cast<number>(1.0) / v;
+        Assert(inverse_diagonal.local_element(i) > 0.,
+               ExcMessage("No diagonal entry in a positive definite operator "
+                          "should be zero"));
+        inverse_diagonal.local_element(i) =
+            1. / inverse_diagonal.local_element(i);
       }
-      inv_vec.compress(VectorOperation::insert);
     }
 
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
@@ -399,40 +390,56 @@ public:
 
     // void set_constraints(const AffineConstraints<number> &c) {}
 
-   void local_compute_diagonal(
-        FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &phi) const
+    void local_compute_diagonal(
+        const MatrixFree<dim, number> &data,
+        LinearAlgebra::distributed::Vector<number> &dst,
+        const unsigned int &,
+        const std::pair<unsigned int, unsigned int> &cell_range) const
     {
-      const unsigned int cell = phi.get_current_cell_index();
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(data);
+      const NUMBER factor_m = 1.0 / deltat;                    // mass matrix
+      const NUMBER factor_s = is_lhs ? theta : -(1.0 - theta); // stifness
+      AlignedVector<VectorizedArray<number>> diagonal(phi.dofs_per_cell);
 
-      const NUMBER factor_m = 1.0 / deltat;                    // mass term
-      const NUMBER factor_s = is_lhs ? theta : -(1.0 - theta); // stiffness/sign
-
-      phi.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-
-      for (const unsigned int q : phi.quadrature_point_indices())
+      for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
       {
-        const auto u = phi.get_value(q);         // u_h at q
-        const auto grad_u = phi.get_gradient(q); // ∇u_h at q
 
-        const auto &b = advection_coefficient(cell, q); // Tensor<1,dim,VA<number>>
-        const auto flux = b * u;                        // b * u (same as in local_apply)
+        AssertDimension(diffusion_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(diffusion_coefficient.size(1), phi.n_q_points);
 
-        // Value part: (1/Δt) u v + θ k u v (or -(1-θ) k u v for RHS)
-        phi.submit_value(factor_m * u +
-                             factor_s * reaction_coefficient(cell, q) * u,
-                         q);
+        AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(reaction_coefficient.size(1), phi.n_q_points);
 
-        // Gradient part: θ (μ ∇u · ∇v - (b·something) v)
-        // You already use this in local_apply:
-        // factor_s * (diffusion * grad_u - flux)
-        // to do, in case when is flux/advection dominated, look at if do not use flux
-        // is better as precodnitioner, because it might explode...
-        phi.submit_gradient(factor_s *
-                                (diffusion_coefficient(cell, q) * grad_u - flux),
-                            q);
+        AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(advection_coefficient.size(1), phi.n_q_points);
+
+        phi.reinit(cell);
+        for (unsigned int i = 0; i < phi.dofs_per_cell; ++i)
+        {
+          for (unsigned int j = 0; j < phi.dofs_per_cell; ++j)
+            phi.submit_dof_value(VectorizedArray<number>(), j);
+          phi.submit_dof_value(make_vectorized_array<number>(1.), i);
+
+          phi.evaluate(EvaluationFlags::gradients | EvaluationFlags::values);
+          for (unsigned int q = 0; q < phi.n_q_points; ++q)
+          {
+            const auto u = phi.get_value(q);
+            const auto grad_u = phi.get_gradient(q);
+
+            auto &b = advection_coefficient(cell, q);
+            const auto flux = b * u;
+            // Weak form terms: (1/Δt) u v ± θ (μ ∇u · ∇v - (b · ∇u) v + k u v)
+            phi.submit_value(factor_m * u + factor_s * reaction_coefficient(cell, q) * u, q);
+            phi.submit_gradient(factor_s * (diffusion_coefficient(cell, q) * grad_u - flux), q);
+          }
+          phi.integrate(EvaluationFlags::gradients | EvaluationFlags::values);
+          diagonal[i] = phi.get_dof_value(i);
+        }
+
+        for (unsigned int i = 0; i < phi.dofs_per_cell; ++i)
+          phi.submit_dof_value(diagonal[i], i);
+        phi.distribute_local_to_global(dst);
       }
-
-      phi.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
     }
 
   private:

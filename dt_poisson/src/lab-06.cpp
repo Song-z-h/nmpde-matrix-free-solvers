@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
   const unsigned int degree = 2;
-  const unsigned int N      = 2000;
+  const unsigned int N      = 8000;
   const double       T      = 1.0;
   const double       theta  = 1.0;
 

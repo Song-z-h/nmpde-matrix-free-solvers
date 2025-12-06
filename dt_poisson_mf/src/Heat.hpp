@@ -55,7 +55,7 @@ class Heat
 
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 2;
+  static constexpr unsigned int dim = 1;
   static constexpr unsigned int fe_degree = 2;
 
   using NUMBER = double;
@@ -123,7 +123,7 @@ public:
     number value(const Point<dim, number> &p,
                  const unsigned int component = 0) const
     {
-      const double beta0 = 1.0;
+      const double beta0 = 0.0;
       if (component == 0)
         return beta0 * (p[0] - 1.0);
       else
@@ -169,12 +169,26 @@ public:
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      const double pi2 = M_PI / 2.0;
+      //2d
+      /*const double pi2 = M_PI / 2.0;
       const double x = p[0];
       const double t = get_time();
       return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
-      /*
-      const double pi2 = numbers::PI / 2.0;
+      */
+      
+     //symmetric version
+      const double pi2 = M_PI / 2.0;
+    const double x   = p[0];
+    const double t   = this->get_time();
+
+    const double mu = 1.0; // must match DiffusionCoefficient
+    const double k  = 1.0; // must match ReactionCoefficient
+
+    return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
+           + (mu * pi2 * pi2 + k) *
+               std::sin(pi2 * x) * std::sin(pi2 * t);
+      //1d
+     /* const double pi2 = numbers::PI / 2.0;
     const double x   = p[0];
     const double t   = this->get_time();
 

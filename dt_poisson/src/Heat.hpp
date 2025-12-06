@@ -29,6 +29,7 @@
 #include <deal.II/lac/trilinos_precondition.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
 #include <deal.II/fe/mapping_fe.h>
+#include <deal.II/lac/precondition.h>
 
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/matrix_tools.h>
@@ -43,7 +44,7 @@
 #include <memory>
 #include <iomanip>
 #include <deal.II/base/timer.h>
-#include <deal.II/base/utilities.h> 
+#include <deal.II/base/utilities.h>
 
 using namespace dealii;
 
@@ -66,7 +67,7 @@ public:
       return 1.0;
     }
   };
-  // coeficient for transport advection
+  // coeficient for reaction
   class FunctionK : public Function<dim>
   {
   public:
@@ -78,7 +79,7 @@ public:
     }
   };
 
-  // Function for the B coefficient.
+  // Function for the advection.
   class FunctionB : public Function<dim>
   {
   public:
@@ -87,7 +88,8 @@ public:
           const unsigned int component = 0) const override
     {
       if (component == 0)
-        return p[0] - 1.0;
+        // return p[0] - 1.0;
+        return 0.0;
       else
         return 0.0;
     }
@@ -99,7 +101,8 @@ public:
       for (unsigned int i = 1; i < dim; ++i)
         values[i] = 0.0;
 
-      values[0] = p[0] - 1.0;
+      //values[0] = p[0] - 1.0;
+      values[0] = 0.0;
     }
   };
 
@@ -134,10 +137,20 @@ public:
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
+      /* const double pi2 = M_PI / 2.0;
+       const double x = p[0];
+       const double t = get_time();
+       return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
+       */
       const double pi2 = M_PI / 2.0;
       const double x = p[0];
-      const double t = get_time();
-      return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
+      const double t = this->get_time();
+
+      const double mu = 1.0; // must match DiffusionCoefficient
+      const double k = 1.0;  // must match ReactionCoefficient
+
+      return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t) + (mu * pi2 * pi2 + k) *
+                  std::sin(pi2 * x) * std::sin(pi2 * t);
     }
   };
 
@@ -234,7 +247,6 @@ public:
   double
   compute_error(const VectorTools::NormType &norm_type);
 
-
   // Optional shared TimerOutput (non-owning)
   void set_timer(const std::shared_ptr<TimerOutput> &timer_)
   {
@@ -242,12 +254,12 @@ public:
   }
 
   // High-level performance stats (for convergence driver)
-  unsigned int       get_n_time_steps() const        { return n_time_steps; }
+  unsigned int get_n_time_steps() const { return n_time_steps; }
   unsigned long long get_total_gmres_iterations() const
   {
     return total_gmres_iterations;
   }
-  double             get_total_linear_solve_time() const
+  double get_total_linear_solve_time() const
   {
     return total_linear_solve_time;
   }
@@ -257,7 +269,6 @@ public:
 
   // Memory usage in MB
   double get_memory_consumption() const;
-
 
 protected:
   // Assemble the mass and stiffness matrices.
@@ -381,14 +392,12 @@ protected:
 
   AffineConstraints<double> constraints;
 
-
   std::shared_ptr<TimerOutput> timer;
 
   // NEW: high-level performance counters
-  unsigned int       n_time_steps            = 0;
-  unsigned long long total_gmres_iterations  = 0;
-  double             total_linear_solve_time = 0.0; // [s]
-
+  unsigned int n_time_steps = 0;
+  unsigned long long total_gmres_iterations = 0;
+  double total_linear_solve_time = 0.0; // [s]
 };
 
 #endif

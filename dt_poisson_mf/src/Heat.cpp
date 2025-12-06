@@ -263,7 +263,8 @@ void Heat::assemble_rhs(const double &time)
 void Heat::solve_time_step()
 {
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
-  SolverGMRES<VectorType> solver(solver_control);
+  //SolverGMRES<VectorType> solver(solver_control);
+  SolverCG<VectorType> solver(solver_control);
 
   // Time the linear solve (global wall time)
   Timer linear_timer(MPI_COMM_WORLD);
@@ -293,8 +294,8 @@ void Heat::solve_time_step()
   total_linear_solve_time += this_solve_time;
   total_gmres_iterations  += iters;
 
-  //pcout << "  " << iters << " GMRES iterations " << std::endl;
-  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
+  pcout << "  " << iters << " GMRES iterations " << std::endl;
+  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 }
 
 

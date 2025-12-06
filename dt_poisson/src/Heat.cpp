@@ -202,7 +202,7 @@ void Heat::assemble_matrices()
               fe_values.shape_grad(j, q) *
               fe_values.JxW(q);
 
-          // transport advection term
+          // advection term
           cell_stiffness_matrix(i, j) -=
               scalar_product(advection_term_tensor,
               fe_values.shape_grad(i, q)) * // Gradient on test function phi_i
@@ -383,7 +383,7 @@ void Heat::solve_time_step()
 {
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
 
-  SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
+  SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
   
 
    TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
@@ -392,12 +392,11 @@ void Heat::solve_time_step()
   TrilinosWrappers::PreconditionJacobi preconditioner;
   preconditioner.initialize(lhs_matrix, jacobi_data);
 
-
   // Measure wall time for the linear solve (like MF code)
   Timer linear_timer(MPI_COMM_WORLD);
   linear_timer.restart();
 
-  solver.solve(lhs_matrix, solution_owned, system_rhs, preconditioner);
+  solver.solve(lhs_matrix, solution_owned, system_rhs, PreconditionIdentity());
 
   linear_timer.stop();
   const double this_solve_time = linear_timer.wall_time(); // seconds
@@ -408,8 +407,8 @@ void Heat::solve_time_step()
 
   constraints.distribute(solution_owned);
 
-  //pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
-  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
+  pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
+  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 
   solution = solution_owned;
 }

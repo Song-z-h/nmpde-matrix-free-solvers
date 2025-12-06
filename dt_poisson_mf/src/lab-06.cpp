@@ -147,7 +147,7 @@ int main(int argc, char *argv[])
   //const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125};
   const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125, 0.00625, 0.003125};
 
-  const unsigned int N = 10;
+  const unsigned int N = 2000;
   const double T = 1.0;
   const double theta = 1.0;
 
@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
 
   std::vector<RunConfig> runs = {
       {PreType::None,   "NoPreconditioner", "convergence_no_prec.csv"},
-      {PreType::Jacobi, "Jacobi",           "convergence_jacobi.csv"}
+      //{PreType::Jacobi, "Jacobi",           "convergence_jacobi.csv"}
   };
 
   for (const auto &run : runs)

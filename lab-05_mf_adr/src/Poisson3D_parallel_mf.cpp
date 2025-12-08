@@ -81,7 +81,7 @@ void Poisson3DParallelMf::setup()
     mf_operator.initialize(mf_storage);
 
     pcout << "  Evaluating coefficients..." << std::endl;
-    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
+    mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient, advection_coefficient);
 
     pcout << "  Computing diagonals..." << std::endl;
     mf_operator.compute_diagonal();
@@ -156,7 +156,8 @@ void Poisson3DParallelMf::setup()
       // Level-dependent coefficients (here constant)
       DiffusionCoefficient<dim> diff_lvl;
       ReactionCoefficient<dim> react_lvl;
-      mg_matrices[level].evaluate_coefficient(diff_lvl, react_lvl);
+      AdvectionCoefficient<dim> advect_lvl(beta0);
+      mg_matrices[level].evaluate_coefficient(diff_lvl, react_lvl, advect_lvl);
 
       // Diagonal for Chebyshev smoother
       mg_matrices[level].compute_diagonal();

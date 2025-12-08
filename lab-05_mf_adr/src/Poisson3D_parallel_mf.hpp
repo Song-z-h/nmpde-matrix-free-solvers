@@ -124,7 +124,6 @@ public:
     }
 
     // Evaluation.
-
     virtual double
     value(const Point<dim> &p,
           const unsigned int component = 0) const override
@@ -140,11 +139,51 @@ public:
     }
   };
 
+  template <int dim>
+  class AdvectionCoefficient : public Function<dim>
+  {
+  public:
+    AdvectionCoefficient(const double beta0_in = 0.0)
+        : Function<dim>(), beta0(beta0_in)
+    {
+    }
+    virtual double
+    value(const Point<dim> &p,
+          const unsigned int component = 0) const override
+    {
+      return value<Number>(p, component);
+    }
+
+    template <typename number>
+    number value(const Point<dim, number> &p,
+                 const unsigned int component = 0) const
+    {
+      if (component == 0)
+        return beta0 * (p[0] - 1.0);
+      else
+        return 0.0;
+    }
+    virtual void
+    vector_value(const Point<dim> &p,
+                 Vector<double> &values) const override
+    {
+      for (unsigned int i = 0; i < dim; ++i)
+        values[i] = value<Number>(p, i);
+    }
+
+  private:
+    double beta0;
+  };
+
   // Forcing term.
-  class ForcingTerm : public Function<dim>
+  // Forcing term.
+class ForcingTerm : public Function<dim>
 {
 public:
-  ForcingTerm() = default;
+  explicit ForcingTerm(const double beta0_in = 0.0)
+    : Function<dim>()
+    , beta0(beta0_in)
+  {}
 
   double value(const Point<dim> &p,
                const unsigned int = 0) const override
@@ -156,19 +195,71 @@ public:
   number value(const Point<dim, number> &p,
                const unsigned int = 0) const
   {
+    // Must be consistent with:
+    //  - DiffusionCoefficient (mu = 1.0)
+    //  - ReactionCoefficient (k = 1.0)
+    //  - AdvectionCoefficient: b = (beta0*(x-1), 0, 0)
+
+    const number x = p[0];
+
     if constexpr (dim == 2)
-      return (20.0 * M_PI * M_PI + 1.0) *
-             std::sin(2.0 * M_PI * p[0]) *
-             std::sin(4.0 * M_PI * p[1]);
+    {
+      const number y       = p[1];
+      const number two_pi  = number(2.0 * M_PI);
+      const number four_pi = number(4.0 * M_PI);
+
+      const number u =
+        std::sin(two_pi * x) *
+        std::sin(four_pi * y);
+
+      const number ux =
+        two_pi * std::cos(two_pi * x) *
+        std::sin(four_pi * y);
+
+      const number lambda = number(20.0 * M_PI * M_PI); // from -Δu = λ u
+      const number k      = number(1.0);
+      const number beta   = number(beta0);
+
+      // f = -Δu + div(b u) + k u
+      //   = (λ + k + beta) u + beta (x-1) ux
+      return (lambda + k + beta) * u
+           + beta * (x - number(1.0)) * ux;
+    }
     else if constexpr (dim == 3)
-      return (29.0 * M_PI * M_PI + 1.0) *
-             std::sin(2.0 * M_PI * p[0]) *
-             std::sin(4.0 * M_PI * p[1]) *
-             std::sin(3.0 * M_PI * p[2]);
+    {
+      const number y       = p[1];
+      const number z       = p[2];
+      const number two_pi  = number(2.0 * M_PI);
+      const number four_pi = number(4.0 * M_PI);
+      const number three_pi= number(3.0 * M_PI);
+
+      const number u =
+        std::sin(two_pi * x) *
+        std::sin(four_pi * y) *
+        std::sin(three_pi * z);
+
+      const number ux =
+        two_pi * std::cos(two_pi * x) *
+        std::sin(four_pi * y) *
+        std::sin(three_pi * z);
+
+      const number lambda = number(29.0 * M_PI * M_PI); // -Δu = λ u
+      const number k      = number(1.0);
+      const number beta   = number(beta0);
+
+      return (lambda + k + beta) * u
+           + beta * (x - number(1.0)) * ux;
+    }
     else
+    {
       return number(0.0);
+    }
   }
+
+private:
+  double beta0;
 };
+
 
   // Dirichlet boundary conditions.
   class FunctionG : public Function<dim>
@@ -293,7 +384,8 @@ public:
     }
 
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
-                              const ReactionCoefficient<dim> &reaction_function)
+                              const ReactionCoefficient<dim> &reaction_function,
+                              const AdvectionCoefficient<dim> &advection_function)
     {
       if (!this->data)
         return; // Safety check
@@ -302,15 +394,25 @@ public:
 
       diffusion_coefficient.reinit(n_cells, phi.n_q_points);
       reaction_coefficient.reinit(n_cells, phi.n_q_points);
+      advection_coefficient.reinit(n_cells, phi.n_q_points);
+
       for (unsigned int cell = 0; cell < n_cells; ++cell)
       {
         phi.reinit(cell);
         for (const unsigned int q : phi.quadrature_point_indices())
         {
+          const auto p = phi.quadrature_point(q);
+
           diffusion_coefficient(cell, q) =
               diffusion_function.value(phi.quadrature_point(q));
           reaction_coefficient(cell, q) =
               reaction_function.value(phi.quadrature_point(q));
+
+          Tensor<1, dim, VectorizedArray<number>> b_loc;
+          for (unsigned int d = 0; d < dim; ++d)
+            b_loc[d] = advection_function.value(p, d);
+
+          advection_coefficient(cell, q) = b_loc;
         }
       }
     }
@@ -347,8 +449,8 @@ public:
         AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
         AssertDimension(reaction_coefficient.size(1), phi.n_q_points);
 
-        //AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
-        //AssertDimension(advection_coefficient.size(1), phi.n_q_points);
+        AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(advection_coefficient.size(1), phi.n_q_points);
 
         phi.reinit(cell);
         for (unsigned int i = 0; i < phi.dofs_per_cell; ++i)
@@ -363,11 +465,11 @@ public:
             const auto u = phi.get_value(q);
             const auto grad_u = phi.get_gradient(q);
 
-            //auto &b = advection_coefficient(cell, q);
-            //const auto flux = b * u;
-            // Weak form terms: (1/Δt) u v ± θ (μ ∇u · ∇v - (b · ∇u) v + k u v)
+            // auto &b = advection_coefficient(cell, q);
+            // const auto flux = b * u;
+            //  Weak form terms: (1/Δt) u v ± θ (μ ∇u · ∇v - (b · ∇u) v + k u v)
             phi.submit_value(reaction_coefficient(cell, q) * u, q);
-            phi.submit_gradient(diffusion_coefficient(cell, q) * grad_u, q);
+            phi.submit_gradient(diffusion_coefficient(cell, q) * grad_u - advection_coefficient(cell, q) * u, q);
           }
           phi.integrate(EvaluationFlags::gradients | EvaluationFlags::values);
           diagonal[i] = phi.get_dof_value(i);
@@ -387,6 +489,7 @@ public:
     //  ReactionCoefficient reaction;
     Table<2, VectorizedArray<number>> diffusion_coefficient;
     Table<2, VectorizedArray<number>> reaction_coefficient;
+    Table<2, Tensor<1, dim, VectorizedArray<number>>> advection_coefficient;
 
     virtual void apply_add(
         LinearAlgebra::distributed::Vector<number> &dst,
@@ -417,46 +520,25 @@ public:
         AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
         AssertDimension(reaction_coefficient.size(1), fe_eval.n_q_points);
 
+        AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(advection_coefficient.size(1), fe_eval.n_q_points);
+
         fe_eval.reinit(cell);
         fe_eval.read_dof_values(src);
         fe_eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
         for (const unsigned int q : fe_eval.quadrature_point_indices())
         {
-          // Since the diffusion and reaction coefficients are constant (1.0),
-          // we can create a vectorized constant directly.
-          /*const Point<dim, VectorizedArray<Number>> p_vect = fe_eval.quadrature_point(q);
-          VectorizedArray<Number> D = 0.0;
-          for (unsigned int v = 0; v < VectorizedArray<Number>::size(); ++v)
-          {
-            Point<dim> p;
-            for (unsigned int d = 0; d < dim; ++d)
-              p[d] = p_vect[d][v];
-            D[v] = diffusion.value(p);
-          }
 
-          VectorizedArray<Number> R = 0.0;
-          for (unsigned int v = 0; v < VectorizedArray<Number>::size(); ++v)
-          {
-            Point<dim> p;
-            for (unsigned int d = 0; d < dim; ++d)
-              p[d] = p_vect[d][v];
-            R[v] = reaction.value(p);
-          }
-          // Get the solution gradient and value at the quadrature point.
-          // These are returned as vectorized types.
-          const Tensor<1, dim, VectorizedArray<Number>> grad_u = fe_eval.get_gradient(q);
-          const VectorizedArray<Number> u_val = fe_eval.get_value(q);
+          const auto u = fe_eval.get_value(q);
+          const auto grad_u = fe_eval.get_gradient(q);
 
-          // All subsequent calculations use vectorized arithmetic.
-          // The result diff_flux is also a vectorized tensor.
-          Tensor<1, dim, VectorizedArray<Number>> diff_flux;
-          for (unsigned int d = 0; d < dim; ++d)
-            diff_flux[d] = D * grad_u[d];
-          */
-          // Submit the contributions for the diffusion and reaction terms.
-          fe_eval.submit_gradient(diffusion_coefficient(cell, q) * fe_eval.get_gradient(q), q);
-          fe_eval.submit_value(reaction_coefficient(cell, q) * fe_eval.get_value(q), q);
+          const auto diff_flux = diffusion_coefficient(cell, q) * grad_u;
+          const auto beta_u = advection_coefficient(cell, q) * u;
+          const auto flux = diff_flux - beta_u; // μ∇u - b u
+
+          fe_eval.submit_gradient(flux, q);
+          fe_eval.submit_value(reaction_coefficient(cell, q) * u, q);
         }
 
         // Integrate the submitted values and distribute the results
@@ -468,11 +550,14 @@ public:
   };
 
   // Constructor.
-  Poisson3DParallelMf(const int _N)
+  Poisson3DParallelMf(const int _N, const double beta0_in = 0.0)
       : N(_N),
         r(fe_degree),
         mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
         mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
+        beta0(beta0_in),
+        advection_coefficient(beta0_in),
+        forcing_term(beta0_in),
         /*mesh(MPI_COMM_WORLD)*/ mesh(MPI_COMM_WORLD,
                                       dealii::Triangulation<dim>::limit_level_difference_at_vertices,
                                       parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
@@ -500,7 +585,7 @@ public:
 
   double get_memory_consumption() const;
 
-    // --- HPC metrics helpers ---
+  // --- HPC metrics helpers ---
   unsigned int
   get_last_cg_iterations() const
   {
@@ -532,9 +617,11 @@ protected:
 
   // Reaction coefficient.
   // ReactionCoefficient reaction_coefficient;
+  double beta0;
 
   DiffusionCoefficient<dim> diffusion_coefficient;
   ReactionCoefficient<dim> reaction_coefficient;
+  AdvectionCoefficient<dim> advection_coefficient;
 
   // Forcing term.
   ForcingTerm forcing_term;
@@ -591,9 +678,9 @@ protected:
 
   typename MatrixFree<dim, Number>::AdditionalData additional_data;
 
-    // --- HPC statistics (for reporting) ---
+  // --- HPC statistics (for reporting) ---
   unsigned int last_cg_iterations = 0;
-  double       last_cg_residual   = 0.0;
+  double last_cg_residual = 0.0;
 
   class DiagonalPreconditioner : public Subscriptor
   {
@@ -637,7 +724,6 @@ protected:
   dealii::mg::Matrix<VectorType> mg_interface_wrapper;
 
   MGConstrainedDoFs mg_constrained_dofs;
-
 };
 
 #endif

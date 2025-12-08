@@ -6,7 +6,8 @@ void Poisson3DParallelMf::setup()
   pcout << "Initializing the mesh (Hypercube Generator)" << std::endl;
 
   GridGenerator::subdivided_hyper_cube(mesh, N, 0.0, 1.0);
-  // mesh.refine_global(1);
+  if(use_gmg)
+    mesh.refine_global(1);
 
   pcout << "  Subdivisions per axis: " << N << std::endl;
   pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
@@ -81,6 +82,9 @@ void Poisson3DParallelMf::setup()
 
     pcout << "  Evaluating coefficients..." << std::endl;
     mf_operator.evaluate_coefficient(diffusion_coefficient, reaction_coefficient);
+
+    pcout << "  Computing diagonals..." << std::endl;
+    mf_operator.compute_diagonal();
   }
   // --- Geometric Multigrid setup (matrix-free on all levels) ---
   {
@@ -210,6 +214,7 @@ void Poisson3DParallelMf::assemble()
   system_rhs.compress(VectorOperation::add);
 }
 
+
 void Poisson3DParallelMf::solve()
 {
   pcout << "===============================================" << std::endl;
@@ -217,26 +222,28 @@ void Poisson3DParallelMf::solve()
   // Apply Dirichlet constraints to RHS
   constraints.set_zero(system_rhs);
 
-  // Global vectors for MF operator
-  VectorType x, b;
-  mf_storage->initialize_dof_vector(x);
-  mf_storage->initialize_dof_vector(b);
+  // Make sure RHS has consistent ghost values (for MF operations if needed)
+  system_rhs.update_ghost_values();
 
-  x = 0.0;
-  b = system_rhs;
-  b.update_ghost_values();
+  // Initial guess
+  solution = 0.0;
 
-  // Choose which preconditioner to test:
-  //const bool use_gmg = false; // <-- flip this to false for Identity baseline
-
-  SolverControl solver_control(50000, 1e-8 * b.l2_norm());
+  SolverControl solver_control(50000, 1e-8 * system_rhs.l2_norm());
   SolverCG<VectorType> solver(solver_control);
 
   if (!use_gmg)
   {
-    pcout << "Solving with global matrix-free operator (Identity preconditioner)" << std::endl;
-    PreconditionIdentity preconditioner;
-    solver.solve(mf_operator, x, b, preconditioner);
+    pcout << "Solving with global matrix-free operator (Jacobi preconditioner)" << std::endl;
+
+    // This returns a DiagonalMatrix<VectorType> that stores 1 / diag(A)
+    const auto diag_ptr = mf_operator.get_matrix_diagonal_inverse();
+    Assert(diag_ptr, ExcMessage("Diagonal not initialized. Did you call compute_diagonal()?"));
+
+    // Jacobi-preconditioned CG:
+    solver.solve(mf_operator,        // A
+                 solution,           // x
+                 system_rhs,         // b
+                 *diag_ptr);         // P ≈ A^{-1}_diag
   }
   else
   {
@@ -269,23 +276,29 @@ void Poisson3DParallelMf::solve()
                              mg_smoother,
                              mg_smoother);
 
-    // Attach interface operators (important once you have hanging nodes / adaptivity)
+    // Attach interface operators
     mg.set_edge_matrices(mg_interface, mg_interface);
 
     PreconditionMG<dim, VectorType, MGTransferMatrixFree<dim, Number>>
       preconditioner(dof_handler, mg, mg_transfer);
 
-    solver.solve(mf_operator, x, b, preconditioner);
+    // Initial guess already zero
+    solver.solve(mf_operator,        // A
+                 solution,           // x
+                 system_rhs,         // b
+                 preconditioner);    // P
   }
 
-  constraints.distribute(x);
-  solution = x;
+  // Enforce Dirichlet constraints on the final solution
+  constraints.distribute(solution);
 
   last_cg_iterations = solver_control.last_step();
-  last_cg_residual = solver_control.last_value();
+  last_cg_residual   = solver_control.last_value();
 
-  pcout << "  CG iterations: " << solver_control.last_step() << std::endl;
+  pcout << "  CG iterations: " << last_cg_iterations
+        << "  final residual: " << last_cg_residual << std::endl;
 }
+
 
 void Poisson3DParallelMf::output() const
 {

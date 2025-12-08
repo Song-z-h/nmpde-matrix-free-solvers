@@ -269,65 +269,28 @@ public:
 
     virtual void compute_diagonal() override
     {
-      // this->inverse_diagonal_entries.reset(new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>());
-      // LinearAlgebra::distributed::Vector<number> &inverse_diagonal =
-      //   this->inverse_diagonal_entries->get_vector();
-
-      LinearAlgebra::distributed::Vector<number> diagonal;
-      this->data->initialize_dof_vector(diagonal); // partitioner-compatible init
-      diagonal = 0.0;
-
-      MatrixFreeTools::compute_diagonal(*this->data,
-                                        diagonal,
-                                        &MatrixFreeLaplaceOperator::local_compute_diagonal,
-                                        this);
-
-      this->set_constrained_entries_to_one(diagonal);
-
-
-
-      // --- DEBUG: diagonal statistics (min/max over all processes) ---
-  const unsigned int local_size = diagonal.local_size();
-  double local_min = std::numeric_limits<double>::max();
-  double local_max = -std::numeric_limits<double>::max();
-
-  for (unsigned int i = 0; i < local_size; ++i)
-  {
-    const double v = diagonal.local_element(i);
-    if (v < local_min) local_min = v;
-    if (v > local_max) local_max = v;
-  }
-
-  const MPI_Comm comm = diagonal.get_mpi_communicator();
-  const double global_min = Utilities::MPI::min(local_min, comm);
-  const double global_max = Utilities::MPI::max(local_max, comm);
-
-  if (Utilities::MPI::this_mpi_process(comm) == 0)
-    std::cout << "[DIAG] min(diag) = " << global_min
-              << ", max(diag) = " << global_max << std::endl;
-  // --- END DEBUG ---   
-
-
-
-
-
       this->inverse_diagonal_entries.reset(
-          new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>(diagonal));
-
-      LinearAlgebra::distributed::Vector<number> &inv_vec =
+          new DiagonalMatrix<LinearAlgebra::distributed::Vector<number>>());
+      LinearAlgebra::distributed::Vector<number> &inverse_diagonal =
           this->inverse_diagonal_entries->get_vector();
+      this->data->initialize_dof_vector(inverse_diagonal);
+      unsigned int dummy = 0;
+      this->data->cell_loop(&MatrixFreeLaplaceOperator::local_compute_diagonal,
+                            this,
+                            inverse_diagonal,
+                            dummy);
 
-      for (unsigned int i = 0; i < inv_vec.local_size(); ++i)
+      this->set_constrained_entries_to_one(inverse_diagonal);
+
+      for (unsigned int i = 0; i < inverse_diagonal.locally_owned_size(); ++i)
       {
-        const number v = inv_vec.local_element(i);
-        // safeguard: if diagonal entry extremely small, clamp to avoid blowup
-        if (std::abs(v) < 1e-16)
-          inv_vec.local_element(i) = static_cast<number>(1.0);
-        else
-          inv_vec.local_element(i) = static_cast<number>(1.0) / v;
+        Assert(inverse_diagonal.local_element(i) > 0.,
+               ExcMessage("No diagonal entry in a positive definite operator "
+                          "should be zero"));
+        inverse_diagonal.local_element(i) =
+            1. / inverse_diagonal.local_element(i);
       }
-      inv_vec.compress(VectorOperation::insert);
-    };
+    }
 
     void evaluate_coefficient(const DiffusionCoefficient<dim> &diffusion_function,
                               const ReactionCoefficient<dim> &reaction_function)
@@ -366,18 +329,54 @@ public:
                                 LinearAlgebra::distributed::Vector<number>>::initialize(mf_ptr, mg_constraints, level);
     }
 
-    void local_compute_diagonal(FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> &fe) const
+    void local_compute_diagonal(
+        const MatrixFree<dim, number> &data,
+        LinearAlgebra::distributed::Vector<number> &dst,
+        const unsigned int &,
+        const std::pair<unsigned int, unsigned int> &cell_range) const
     {
-      const unsigned int cell = fe.get_current_cell_index();
+      FEEvaluation<dim, fe_degree, fe_degree + 1, 1, number> phi(data);
+      AlignedVector<VectorizedArray<number>> diagonal(phi.dofs_per_cell);
 
-      //fe.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-      for (unsigned int q : fe.quadrature_point_indices())
+      for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
       {
-        fe.submit_gradient(diffusion_coefficient(cell, q) * fe.get_gradient(q), q);
-        fe.submit_value(reaction_coefficient(cell, q) * fe.get_value(q), q);
-      }
 
-      fe.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
+        AssertDimension(diffusion_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(diffusion_coefficient.size(1), phi.n_q_points);
+
+        AssertDimension(reaction_coefficient.size(0), data.n_cell_batches());
+        AssertDimension(reaction_coefficient.size(1), phi.n_q_points);
+
+        //AssertDimension(advection_coefficient.size(0), data.n_cell_batches());
+        //AssertDimension(advection_coefficient.size(1), phi.n_q_points);
+
+        phi.reinit(cell);
+        for (unsigned int i = 0; i < phi.dofs_per_cell; ++i)
+        {
+          for (unsigned int j = 0; j < phi.dofs_per_cell; ++j)
+            phi.submit_dof_value(VectorizedArray<number>(), j);
+          phi.submit_dof_value(make_vectorized_array<number>(1.), i);
+
+          phi.evaluate(EvaluationFlags::gradients | EvaluationFlags::values);
+          for (unsigned int q = 0; q < phi.n_q_points; ++q)
+          {
+            const auto u = phi.get_value(q);
+            const auto grad_u = phi.get_gradient(q);
+
+            //auto &b = advection_coefficient(cell, q);
+            //const auto flux = b * u;
+            // Weak form terms: (1/Δt) u v ± θ (μ ∇u · ∇v - (b · ∇u) v + k u v)
+            phi.submit_value(reaction_coefficient(cell, q) * u, q);
+            phi.submit_gradient(diffusion_coefficient(cell, q) * grad_u, q);
+          }
+          phi.integrate(EvaluationFlags::gradients | EvaluationFlags::values);
+          diagonal[i] = phi.get_dof_value(i);
+        }
+
+        for (unsigned int i = 0; i < phi.dofs_per_cell; ++i)
+          phi.submit_dof_value(diagonal[i], i);
+        phi.distribute_local_to_global(dst);
+      }
     }
 
   private:

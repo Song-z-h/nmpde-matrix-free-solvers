@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
-  std::vector<int> mesh_Ns = {5, 10, 20, 40};
+  std::vector<int> mesh_Ns = {5, 10, 20, 40, 80}; //100 is the maximum numberi canpu on my pc
 
   TimerOutput timer(MPI_COMM_WORLD, pcout, TimerOutput::summary, TimerOutput::wall_times);
 

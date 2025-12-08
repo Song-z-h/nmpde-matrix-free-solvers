@@ -9,7 +9,7 @@ EXE_MF=./poisson_mf_strong
 EXE_MAT=./poisson_mat_strong
 
 # Problem size N (global subdivisions per axis)
-N=40
+N=50
 
 # List of MPI process counts for strong scaling
 PROCS_LIST=(1 2 3 4 5 6)

@@ -236,8 +236,14 @@ void Poisson3DParallelMf::solve()
   TrilinosWrappers::PreconditionAMG preconditioner;
   preconditioner.initialize(system_matrix, amg_data);
 */
+
+   TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
+
+  TrilinosWrappers::PreconditionJacobi preconditioner;
+  preconditioner.initialize(system_matrix, jacobi_data);
+
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
+  solver.solve(system_matrix, solution, system_rhs, preconditioner);
   constraints.distribute(solution);
 
     last_cg_iterations = solver_control.last_step();

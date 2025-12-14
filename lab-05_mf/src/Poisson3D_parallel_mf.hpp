@@ -473,9 +473,7 @@ public:
         r(fe_degree),
         mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
         mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
-        /*mesh(MPI_COMM_WORLD)*/ mesh(MPI_COMM_WORLD,
-                                      dealii::Triangulation<dim>::limit_level_difference_at_vertices,
-                                      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+        mesh(MPI_COMM_WORLD),
         pcout(std::cout, mpi_rank == 0)
   {
   }
@@ -545,8 +543,8 @@ protected:
   // Triangulation. The parallel::fullydistributed::Triangulation class manages
   // a triangulation that is completely distributed (i.e. each process only
   // knows about the elements it owns and its ghost elements).
-  parallel::distributed::Triangulation<dim> mesh;
-  // parallel::fullydistributed::Triangulation<dim> mesh;
+ // parallel::distributed::Triangulation<dim> mesh;
+   parallel::fullydistributed::Triangulation<dim> mesh;
 
   // Finite element space.
   std::unique_ptr<FiniteElement<dim>> fe;

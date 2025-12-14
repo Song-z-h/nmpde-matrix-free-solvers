@@ -5,10 +5,17 @@ void Poisson3DParallelMf::setup()
   pcout << "===============================================" << std::endl;
   pcout << "Initializing the mesh (Hypercube Generator)" << std::endl;
 
-  GridGenerator::subdivided_hyper_cube(mesh, N, 0.0, 1.0);
+  Triangulation<dim> mesh_serial;
+  GridGenerator::subdivided_hyper_cube(mesh_serial, N, 0.0, 1.0);
   if(use_gmg)
     mesh.refine_global(1);
 
+  GridTools::partition_triangulation(mpi_size, mesh_serial);
+
+  const auto construction_data = TriangulationDescription::Utilities::
+      create_description_from_triangulation(mesh_serial, MPI_COMM_WORLD);
+
+  mesh.create_triangulation(construction_data);
   pcout << "  Subdivisions per axis: " << N << std::endl;
   pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
   pcout << "-----------------------------------------------" << std::endl;

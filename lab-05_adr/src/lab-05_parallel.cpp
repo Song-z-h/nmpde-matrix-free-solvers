@@ -36,7 +36,7 @@ convergence_file
   << "h,ndofs,eL2,eH1,"
   << "setup_time,assemble_time,solve_time,output_time,error_time,total_time,"
   << "memory_MB,memory_MB_per_dof,"
-  << "cg_iters,avg_time_per_iter,"
+  << "gmres_iters,avg_time_per_iter,"
   << "dofs_per_second,million_dofs_per_second,dofs_per_second_per_core"
   << std::endl;
   }
@@ -46,7 +46,7 @@ convergence_file
     pcout << "Mesh refinement " << mesh_Ns[i] << std::endl;
 
     // 1. Create Problem
-    Poisson3DParallelMf problem(mesh_Ns[i], degree, 4.0);
+    Poisson3DParallelMf problem(mesh_Ns[i], degree, 1000);
 
     double setup_time, assemble_time, solve_time, output_time, error_time;
 
@@ -138,7 +138,7 @@ table.add_value("L2", error_L2);
 table.add_value("H1", error_H1);
 table.add_value("Memory_MB", precise_memory_mb);
 table.add_value("Mem/DoF", memory_per_dof);
-table.add_value("CG_iters", cg_iters);
+table.add_value("GMRES_iters", cg_iters);
 table.add_value("DoFs/s[1e6]", million_dofs_per_second);
 
 // --- CSV output ---

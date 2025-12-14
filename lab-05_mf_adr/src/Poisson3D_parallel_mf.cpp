@@ -187,7 +187,7 @@ void Poisson3DParallelMf::setup()
 }
   // Simple memory report
   const double memory_mb = get_memory_consumption();
-  pcout << "  > Precise Memory (MF + Vecs): " << std::fixed << std::setprecision(4)
+  pcout << "  > Precise Memory (MF + Vecs): "
         << memory_mb << " MB" << std::endl;
 }
 
@@ -236,7 +236,7 @@ void Poisson3DParallelMf::solve()
   solution = 0.0;
 
   SolverControl solver_control(50000, 1e-8 * system_rhs.l2_norm());
-  SolverCG<VectorType> solver(solver_control);
+  SolverGMRES<VectorType> solver(solver_control);
 
   if (!use_gmg)
   {
@@ -302,8 +302,8 @@ void Poisson3DParallelMf::solve()
   last_cg_iterations = solver_control.last_step();
   last_cg_residual   = solver_control.last_value();
 
-  pcout << "  CG iterations: " << last_cg_iterations
-        << "  final residual: " << last_cg_residual << std::endl;
+  pcout << "  GMRES iterations: " << last_cg_iterations
+        << "  final residual: " << solver_control.last_value() << std::endl;
 }
 
 

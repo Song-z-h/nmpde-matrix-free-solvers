@@ -227,7 +227,7 @@ void Poisson3DParallelMf::solve()
   // The linear solver is basically the same as in serial, in terms of
   // interface: we only have to use appropriate classes, compatible with
   // Trilinos linear algebra.
-  SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
+  SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
   // TrilinosWrappers::PreconditionSSOR preconditioner;
   // preconditioner.initialize(
@@ -258,7 +258,7 @@ void Poisson3DParallelMf::solve()
     last_cg_iterations = solver_control.last_step();
   last_cg_residual   = solver_control.last_value();
 
-  pcout << "  " << solver_control.last_step() << " residual: " << solver_control.last_value() << " CG iterations" << std::endl;
+  pcout << "  " << solver_control.last_step() << " residual: " << solver_control.last_value() << " GMRES iterations" << std::endl;
 }
 
 void Poisson3DParallelMf::output() const

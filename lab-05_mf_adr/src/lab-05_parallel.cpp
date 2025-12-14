@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
   {
     pcout << "Mesh size " << mesh_Ns[i] << std::endl;
 
-    Poisson3DParallelMf problem(mesh_Ns[i], 4.0);
+    Poisson3DParallelMf problem(mesh_Ns[i], 1000);
 
     double setup_time, assemble_time, solve_time, output_time, error_time;
 
@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
     table.add_value("H1", error_H1);
     table.add_value("Memory_MB", precise_memory_mb);
     table.add_value("Mem/DoF", memory_per_dof);
-    table.add_value("CG_iters", cg_iters);
+    table.add_value("GMRES_iters", cg_iters);
     table.add_value("DoFs/s[1e6]", million_dofs_per_second);
 
     // CSV line

@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
       << "nprocs,N0,N,h,ndofs,eL2,eH1,"
       << "setup_time,assemble_time,solve_time,output_time,error_time,total_time,"
       << "memory_MB,memory_MB_per_dof,"
-      << "cg_iters,avg_time_per_iter,"
+      << "gmres_iters,avg_time_per_iter,"
       << "dofs_per_second,million_dofs_per_second,dofs_per_second_per_core"
       << std::endl;
   }
@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
     pcout << "-------------------------------------------------" << std::endl;
     pcout << "Mesh subdivisions N = " << N_current << std::endl;
 
-    Poisson3DParallelMf problem(N_current, degree);
+    Poisson3DParallelMf problem(N_current, degree, 1000);
 
     double setup_time    = 0.0;
     double assemble_time = 0.0;
@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
     table.add_value("H1", error_H1);
     table.add_value("Memory_MB", precise_memory_mb);
     table.add_value("Mem/DoF", memory_per_dof);
-    table.add_value("CG_iters", cg_iters);
+    table.add_value("GMRES_iters", cg_iters);
     table.add_value("DoFs/s[1e6]", million_dofs_per_second);
 
     if (mpi_rank == 0)

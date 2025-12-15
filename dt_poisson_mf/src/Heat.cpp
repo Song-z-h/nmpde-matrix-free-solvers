@@ -1,44 +1,73 @@
 #include "Heat.hpp"
 
-
 void Heat::setup()
 {
+  /* pcout << "Initializing the mesh" << std::endl;
+
+   Triangulation<dim> serial_hypercube_tria;
+   GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
+
+   Triangulation<dim> serial_simplex_tria;
+   if (dim == 1)
+   {
+     // In 1D, no conversion needed (intervals are simplices).
+     serial_simplex_tria.copy_triangulation(serial_hypercube_tria);
+   }
+   else
+   {
+     // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
+     // const unsigned int n_divisions = (dim == 2 ? 2 : 6);
+     GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
+                                                      serial_simplex_tria);
+   }
+
+   pcout << "  Number of elements in serial mesh = " << serial_simplex_tria.n_active_cells() << std::endl;
+
+   // Distribute for parallel.
+   GridTools::partition_triangulation(mpi_size, serial_simplex_tria);
+   const auto construction_data =
+       TriangulationDescription::Utilities::create_description_from_triangulation(serial_simplex_tria, MPI_COMM_WORLD);
+   mesh.create_triangulation(construction_data);
+
+   pcout << "  Number of elements in distributed mesh = " << mesh.n_global_active_cells() << std::endl;
+
+   // Optional: Save the generated mesh to a file for visualization (e.g., VTK).
+   if (mpi_rank == 0)
+   {
+     const std::string mesh_file_name = "mesh-" + std::to_string(N + 1) + ".vtk";
+     GridOut grid_out;
+     std::ofstream grid_out_file(mesh_file_name);
+     grid_out.write_vtk(serial_simplex_tria, grid_out_file);
+     pcout << "  Mesh saved to " << mesh_file_name << std::endl;
+   }*/
+
   pcout << "Initializing the mesh" << std::endl;
 
-  Triangulation<dim> serial_hypercube_tria;
-  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
+  Triangulation<dim> serial_tria;
+  // Hypercube mesh, no conversion to simplices
+  GridGenerator::subdivided_hyper_cube(serial_tria, N, 0.0, 1.0);
 
-  Triangulation<dim> serial_simplex_tria;
-  if (dim == 1)
-  {
-    // In 1D, no conversion needed (intervals are simplices).
-    serial_simplex_tria.copy_triangulation(serial_hypercube_tria);
-  }
-  else
-  {
-    // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
-    // const unsigned int n_divisions = (dim == 2 ? 2 : 6);
-    GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
-                                                     serial_simplex_tria);
-  }
-
-  pcout << "  Number of elements in serial mesh = " << serial_simplex_tria.n_active_cells() << std::endl;
+  pcout << "  Number of elements in serial mesh = "
+        << serial_tria.n_active_cells() << std::endl;
 
   // Distribute for parallel.
-  GridTools::partition_triangulation(mpi_size, serial_simplex_tria);
+  GridTools::partition_triangulation(mpi_size, serial_tria);
   const auto construction_data =
-      TriangulationDescription::Utilities::create_description_from_triangulation(serial_simplex_tria, MPI_COMM_WORLD);
+      TriangulationDescription::Utilities::create_description_from_triangulation(
+          serial_tria, MPI_COMM_WORLD);
   mesh.create_triangulation(construction_data);
 
-  pcout << "  Number of elements in distributed mesh = " << mesh.n_global_active_cells() << std::endl;
+  pcout << "  Number of elements in distributed mesh = "
+        << mesh.n_global_active_cells() << std::endl;
 
-  // Optional: Save the generated mesh to a file for visualization (e.g., VTK).
+  // Optional: Save mesh to VTK
   if (mpi_rank == 0)
   {
-    const std::string mesh_file_name = "mesh-" + std::to_string(N + 1) + ".vtk";
+    const std::string mesh_file_name =
+        "mesh-" + std::to_string(N) + ".vtk";
     GridOut grid_out;
     std::ofstream grid_out_file(mesh_file_name);
-    grid_out.write_vtk(serial_simplex_tria, grid_out_file);
+    grid_out.write_vtk(serial_tria, grid_out_file);
     pcout << "  Mesh saved to " << mesh_file_name << std::endl;
   }
 
@@ -54,7 +83,7 @@ void Heat::setup()
     // 1D
     // fe = std::make_unique<FE_Q<dim>>(r);
 
-    if (dim > 1)
+    /*if (dim > 1)
     {
       fe = std::make_unique<FE_SimplexP<dim>>(fe_degree);
       // Construct the quadrature formula of the appopriate degree of exactness.
@@ -76,7 +105,19 @@ void Heat::setup()
     // 1D
 
     pcout << "  Quadrature points per cell = " << quadrature->size()
-          << std::endl;
+          << std::endl;*/
+
+    pcout << "Initializing the finite element space" << std::endl;
+
+    // Hypercube + FE_Q, exactly like the Poisson code
+    fe = std::make_unique<FE_Q<dim>>(fe_degree);
+    quadrature = std::make_unique<QGauss<dim>>(fe_degree + 1);
+    // For faces (Neumann), not actually used now but kept for completeness
+    quadrature_boundary = std::make_unique<QGauss<dim - 1>>(fe_degree + 1);
+
+    pcout << "  Degree                     = " << fe->degree << std::endl;
+    pcout << "  DoFs per cell              = " << fe->dofs_per_cell << std::endl;
+    pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
   }
 
   pcout << "-----------------------------------------------" << std::endl;
@@ -146,11 +187,10 @@ void Heat::setup()
     // Initialize our matrix-free operator
 
     mf_operator_lhs.initialize(mf_storage);
-    //mf_operator_lhs.set_constraints(constraints);
+    // mf_operator_lhs.set_constraints(constraints);
     mf_operator_lhs.evaluate_coefficient(mu, b, k);
 
     mf_operator_lhs.compute_diagonal();
-
 
     mf_operator_rhs.initialize(mf_storage);
     mf_operator_rhs.evaluate_coefficient(mu, b, k);
@@ -263,7 +303,7 @@ void Heat::assemble_rhs(const double &time)
 void Heat::solve_time_step()
 {
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
-  //SolverGMRES<VectorType> solver(solver_control);
+  // SolverGMRES<VectorType> solver(solver_control);
   SolverCG<VectorType> solver(solver_control);
 
   // Time the linear solve (global wall time)
@@ -292,12 +332,11 @@ void Heat::solve_time_step()
 
   // Accumulate performance counters
   total_linear_solve_time += this_solve_time;
-  total_gmres_iterations  += iters;
+  total_gmres_iterations += iters;
 
   pcout << "  " << iters << " GMRES iterations " << std::endl;
   pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 }
-
 
 void Heat::output(const unsigned int &time_step) const
 {
@@ -330,11 +369,10 @@ void Heat::solve()
 
   pcout << "===============================================" << std::endl;
 
-    // Reset performance counters for this run
-  n_time_steps            = 0;
-  total_gmres_iterations  = 0;
+  // Reset performance counters for this run
+  n_time_steps = 0;
+  total_gmres_iterations = 0;
   total_linear_solve_time = 0.0;
-
 
   // Apply the initial condition.
   {
@@ -367,8 +405,8 @@ void Heat::solve()
     beta.set_time(time);
     alpha.set_time(time);
 
-   // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
-     //     << time << ":" << std::flush;
+    // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
+    //     << time << ":" << std::flush;
 
     // --- Assemble RHS ---
     if (timer)
@@ -391,7 +429,7 @@ void Heat::solve()
       solve_time_step();
     }
 
-        ++n_time_steps;
+    ++n_time_steps;
 
     /*if (timer)
     {
@@ -405,6 +443,7 @@ void Heat::solve()
   }
 }
 
+/*
 double
 Heat::compute_error(const VectorTools::NormType &norm_type)
 {
@@ -463,6 +502,42 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
                                       norm_type);
   }
   // Then, we add out all the cells.
+  const double error =
+      VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
+
+  return error;
+}*/
+
+double Heat::compute_error(const VectorTools::NormType &norm_type)
+{
+  // Set exact solution at current time
+  exact_solution.set_time(time);
+
+  // Quadrature: one order higher than assembly
+  const QGauss<dim> quadrature_error(fe_degree + 2);
+
+  // One entry per active cell
+  Vector<double> error_per_cell(mesh.n_active_cells());
+
+  // Ghosted solution for integration
+  VectorType ghosted_solution(locally_owned_dofs,
+                              locally_relevant_dofs,
+                              MPI_COMM_WORLD);
+  ghosted_solution = solution;
+  // ghosted_solution.update_ghost_values(); // optional with Trilinos
+
+  // Use a simple mapping (linear) for error computation
+  FE_Q<dim> fe_linear(1);
+  MappingFE<dim> mapping(fe_linear);
+
+  VectorTools::integrate_difference(mapping,
+                                    dof_handler,
+                                    ghosted_solution,
+                                    exact_solution,
+                                    error_per_cell,
+                                    quadrature_error,
+                                    norm_type);
+
   const double error =
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 

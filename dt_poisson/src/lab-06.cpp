@@ -158,8 +158,8 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
-  const unsigned int degree = 2;
-  const unsigned int N      = 8000;
+  const unsigned int degree = 3;
+  const unsigned int N      = 10;
   const double       T      = 1.0;
   const double       theta  = 1.0;
 

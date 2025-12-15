@@ -55,8 +55,8 @@ class Heat
 
 public:
   // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 1;
-  static constexpr unsigned int fe_degree = 2;
+  static constexpr unsigned int dim = 3;
+  static constexpr unsigned int fe_degree = 3;
 
   using NUMBER = double;
   using VectorType = LinearAlgebra::distributed::Vector<NUMBER>; // same as solution/rhs

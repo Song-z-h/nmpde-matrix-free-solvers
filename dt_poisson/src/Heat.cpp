@@ -2,42 +2,73 @@
 
 void Heat::setup()
 {
+  /* pcout << "Initializing the mesh" << std::endl;
+
+   Triangulation<dim> serial_hypercube_tria;
+   GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
+
+    pcout << "  Number of elements in serial mesh = "
+         << serial_hypercube_tria.n_active_cells() << std::endl;
+
+   Triangulation<dim> serial_simplex_tria;
+   if (dim == 1)
+   {
+     // In 1D, no conversion needed (intervals are simplices).
+     serial_simplex_tria.copy_triangulation(serial_hypercube_tria);
+   }
+   else
+   {
+     // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
+     //const unsigned int n_divisions = (dim == 2 ? 2 : 6);
+     GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
+                                                      serial_simplex_tria);
+   }
+
+
+   // Distribute for parallel.
+   GridTools::partition_triangulation(mpi_size, serial_simplex_tria);
+   const auto construction_data =
+       TriangulationDescription::Utilities::create_description_from_triangulation(serial_simplex_tria, MPI_COMM_WORLD);
+   mesh.create_triangulation(construction_data);
+
+   pcout << "  Number of elements in distributed mesh = " << mesh.n_global_active_cells() << std::endl;
+
+   // Optional: Save the generated mesh to a file for visualization (e.g., VTK).
+   if (mpi_rank == 0)
+   {
+     const std::string mesh_file_name = "mesh-" + std::to_string(N + 1) + ".vtk";
+     GridOut grid_out;
+     std::ofstream grid_out_file(mesh_file_name);
+     grid_out.write_vtk(serial_simplex_tria, grid_out_file);
+     pcout << "  Mesh saved to " << mesh_file_name << std::endl;
+   }*/
   pcout << "Initializing the mesh" << std::endl;
 
-  Triangulation<dim> serial_hypercube_tria;
-  GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
+  Triangulation<dim> serial_tria;
+  // Hypercube mesh, no conversion to simplices
+  GridGenerator::subdivided_hyper_cube(serial_tria, N, 0.0, 1.0);
 
-  Triangulation<dim> serial_simplex_tria;
-  if (dim == 1)
-  {
-    // In 1D, no conversion needed (intervals are simplices).
-    serial_simplex_tria.copy_triangulation(serial_hypercube_tria);
-  }
-  else
-  {
-    // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
-    //const unsigned int n_divisions = (dim == 2 ? 2 : 6);
-    GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
-                                                     serial_simplex_tria);
-  }
-
-  pcout << "  Number of elements in serial mesh = " << serial_simplex_tria.n_active_cells() << std::endl;
+  pcout << "  Number of elements in serial mesh = "
+        << serial_tria.n_active_cells() << std::endl;
 
   // Distribute for parallel.
-  GridTools::partition_triangulation(mpi_size, serial_simplex_tria);
+  GridTools::partition_triangulation(mpi_size, serial_tria);
   const auto construction_data =
-      TriangulationDescription::Utilities::create_description_from_triangulation(serial_simplex_tria, MPI_COMM_WORLD);
+      TriangulationDescription::Utilities::create_description_from_triangulation(
+          serial_tria, MPI_COMM_WORLD);
   mesh.create_triangulation(construction_data);
 
-  pcout << "  Number of elements in distributed mesh = " << mesh.n_global_active_cells() << std::endl;
+  pcout << "  Number of elements in distributed mesh = "
+        << mesh.n_global_active_cells() << std::endl;
 
-  // Optional: Save the generated mesh to a file for visualization (e.g., VTK).
+  // Optional: Save mesh to VTK
   if (mpi_rank == 0)
   {
-    const std::string mesh_file_name = "mesh-" + std::to_string(N + 1) + ".vtk";
+    const std::string mesh_file_name =
+        "mesh-" + std::to_string(N) + ".vtk";
     GridOut grid_out;
     std::ofstream grid_out_file(mesh_file_name);
-    grid_out.write_vtk(serial_simplex_tria, grid_out_file);
+    grid_out.write_vtk(serial_tria, grid_out_file);
     pcout << "  Mesh saved to " << mesh_file_name << std::endl;
   }
 
@@ -53,7 +84,7 @@ void Heat::setup()
     // 1D
     // fe = std::make_unique<FE_Q<dim>>(r);
 
-    if (dim > 1)
+    /*if (dim > 1)
     {
       fe = std::make_unique<FE_SimplexP<dim>>(r);
       // Construct the quadrature formula of the appopriate degree of exactness.
@@ -70,9 +101,18 @@ void Heat::setup()
     pcout << "  Degree                     = " << fe->degree << std::endl;
     pcout << "  DoFs per cell              = " << fe->dofs_per_cell
           << std::endl;
-    // 2 3 D
-    // quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-    // 1D
+    */
+    pcout << "Initializing the finite element space" << std::endl;
+
+    // Hypercube + FE_Q, exactly like the Poisson code
+    fe = std::make_unique<FE_Q<dim>>(r);
+    quadrature = std::make_unique<QGauss<dim>>(r + 1);
+    // For faces (Neumann), not actually used now but kept for completeness
+    quadrature_boundary = std::make_unique<QGauss<dim - 1>>(r + 1);
+
+    pcout << "  Degree                     = " << fe->degree << std::endl;
+    pcout << "  DoFs per cell              = " << fe->dofs_per_cell << std::endl;
+    pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
 
     pcout << "  Quadrature points per cell = " << quadrature->size()
           << std::endl;
@@ -104,7 +144,7 @@ void Heat::setup()
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-    //for (const auto &id : mesh.get_boundary_ids())
+    // for (const auto &id : mesh.get_boundary_ids())
     boundary_functions[0] = &bc_function;
 
     MappingFE<dim> mapping(*fe);
@@ -113,7 +153,6 @@ void Heat::setup()
                                              boundary_functions,
                                              constraints);
     constraints.close();
-
   }
 
   pcout << "-----------------------------------------------" << std::endl;
@@ -180,14 +219,14 @@ void Heat::assemble_matrices()
       const double mu_loc = mu.value(fe_values.quadrature_point(q));
       const double k_loc = k.value(fe_values.quadrature_point(q));
       // const double tau_loc = tau.value(fe_values.quadrature_point(q));
-      //const Tensor<1, dim> b_loc = b.value(fe_values.quadrature_point(q));
+      // const Tensor<1, dim> b_loc = b.value(fe_values.quadrature_point(q));
 
       Vector<double> b_loc(dim);
-      //double b_value = b.value(fe_values.quadrature_point(q));
+      // double b_value = b.value(fe_values.quadrature_point(q));
       b.vector_value(fe_values.quadrature_point(q), b_loc);
       Tensor<1, dim> advection_term_tensor;
-          for (unsigned int d = 0; d < dim; ++d)
-            advection_term_tensor[d] = b_loc[d];
+      for (unsigned int d = 0; d < dim; ++d)
+        advection_term_tensor[d] = b_loc[d];
       for (unsigned int i = 0; i < dofs_per_cell; ++i)
       {
         for (unsigned int j = 0; j < dofs_per_cell; ++j)
@@ -205,8 +244,8 @@ void Heat::assemble_matrices()
           // advection term
           cell_stiffness_matrix(i, j) -=
               scalar_product(advection_term_tensor,
-              fe_values.shape_grad(i, q)) * // Gradient on test function phi_i
-              fe_values.shape_value(j, q) *   // Value of trial function phi_j
+                             fe_values.shape_grad(i, q)) * // Gradient on test function phi_i
+              fe_values.shape_value(j, q) *                // Value of trial function phi_j
               fe_values.JxW(q);
 
           // mid term
@@ -236,14 +275,13 @@ void Heat::assemble_matrices()
 
     cell->get_dof_indices(dof_indices);
 
-   // mass_matrix.add(dof_indices, cell_mass_matrix);
-    //stiffness_matrix.add(dof_indices, cell_stiffness_matrix);
-
+    // mass_matrix.add(dof_indices, cell_mass_matrix);
+    // stiffness_matrix.add(dof_indices, cell_stiffness_matrix);
 
     constraints.distribute_local_to_global(cell_mass_matrix,
-                                       dof_indices, mass_matrix);
+                                           dof_indices, mass_matrix);
     constraints.distribute_local_to_global(cell_stiffness_matrix,
-                                       dof_indices, stiffness_matrix);
+                                           dof_indices, stiffness_matrix);
   }
 
   mass_matrix.compress(VectorOperation::add);
@@ -272,8 +310,8 @@ void Heat::assemble_matrices()
     // Finally, we modify the linear system to apply the boundary conditions.
     // This replaces the equations for the boundary DoFs with the corresponding
     // u_i = 0 equations.
-    //MatrixTools::apply_boundary_values(
-      //  boundary_values, lhs_matrix, solution, system_rhs, true);
+    // MatrixTools::apply_boundary_values(
+    //  boundary_values, lhs_matrix, solution, system_rhs, true);
   }
 }
 
@@ -362,11 +400,10 @@ void Heat::assemble_rhs(const double &time)
        } */
 
     cell->get_dof_indices(dof_indices);
-    //system_rhs.add(dof_indices, cell_rhs);
-
+    // system_rhs.add(dof_indices, cell_rhs);
 
     constraints.distribute_local_to_global(cell_rhs,
-                                       dof_indices, system_rhs);
+                                           dof_indices, system_rhs);
   }
 
   system_rhs.compress(VectorOperation::add);
@@ -384,9 +421,8 @@ void Heat::solve_time_step()
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
 
   SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
-  
 
-   TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
+  TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
   // (you can tweak jacobi_data.relaxation if you want; default is 1.0)
 
   TrilinosWrappers::PreconditionJacobi preconditioner;
@@ -403,7 +439,7 @@ void Heat::solve_time_step()
 
   // Accumulate performance counters
   total_linear_solve_time += this_solve_time;
-  total_gmres_iterations  += solver_control.last_step();
+  total_gmres_iterations += solver_control.last_step();
 
   constraints.distribute(solution_owned);
 
@@ -413,11 +449,10 @@ void Heat::solve_time_step()
   solution = solution_owned;
 }
 
-
 void Heat::output(const unsigned int &time_step) const
 {
 
-   IndexSet locally_relevant_dofs;
+  IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
   TrilinosWrappers::MPI::Vector solution_ghost(locally_owned_dofs,
                                                locally_relevant_dofs,
@@ -440,12 +475,12 @@ void Heat::output(const unsigned int &time_step) const
 
 void Heat::solve()
 {
-  
+
   // Reset performance counters for this run
-  n_time_steps            = 0;
-  total_gmres_iterations  = 0;
+  n_time_steps = 0;
+  total_gmres_iterations = 0;
   total_linear_solve_time = 0.0;
-  
+
   assemble_matrices();
 
   pcout << "===============================================" << std::endl;
@@ -481,8 +516,8 @@ void Heat::solve()
     beta.set_time(time);
     alpha.set_time(time);
 
-   // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
-     //     << time << ":" << std::flush;
+    // pcout << "n = " << std::setw(3) << time_step << ", t = " << std::setw(5)
+    //     << time << ":" << std::flush;
 
     // Assemble RHS
     if (timer)
@@ -521,7 +556,7 @@ void Heat::solve()
   }
 }
 
-
+/*
 double
 Heat::compute_error(const VectorTools::NormType &norm_type)
 {
@@ -529,18 +564,17 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
   // quadrature formula. To make sure we are accurate enough, we use a
   // quadrature formula with one node more than what we used in assembly.
 
-  //FE_SimplexP<dim> fe_linear(1);
-  //MappingFE mapping(fe_linear);
+  // FE_SimplexP<dim> fe_linear(1);
+  // MappingFE mapping(fe_linear);
 
   exact_solution.set_time(time);
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell;
 
-   TrilinosWrappers::MPI::Vector ghosted_solution(locally_owned_dofs,
+  TrilinosWrappers::MPI::Vector ghosted_solution(locally_owned_dofs,
                                                  locally_relevant_dofs,
                                                  MPI_COMM_WORLD);
   ghosted_solution = solution;
-
 
   // Use a unique_ptr to hold the correct quadrature rule.
   std::unique_ptr<Quadrature<dim>> quadrature_error;
@@ -584,6 +618,42 @@ Heat::compute_error(const VectorTools::NormType &norm_type)
       VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
 
   return error;
+}*/
+
+double Heat::compute_error(const VectorTools::NormType &norm_type)
+{
+  // Set exact solution at current time
+  exact_solution.set_time(time);
+
+  // Quadrature: one order higher than assembly
+  const QGauss<dim> quadrature_error(r + 2);
+
+  // One entry per active cell
+  Vector<double> error_per_cell(mesh.n_active_cells());
+
+  // Ghosted solution for integration
+  TrilinosWrappers::MPI::Vector ghosted_solution(locally_owned_dofs,
+                                                 locally_relevant_dofs,
+                                                 MPI_COMM_WORLD);
+  ghosted_solution = solution;
+  // ghosted_solution.update_ghost_values(); // optional with Trilinos
+
+  // Use a simple mapping (linear) for error computation
+  FE_Q<dim>    fe_linear(1);
+  MappingFE<dim> mapping(fe_linear);
+
+  VectorTools::integrate_difference(mapping,
+                                    dof_handler,
+                                    ghosted_solution,
+                                    exact_solution,
+                                    error_per_cell,
+                                    quadrature_error,
+                                    norm_type);
+
+  const double error =
+    VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
+
+  return error;
 }
 
 
@@ -591,23 +661,23 @@ double Heat::get_memory_consumption() const
 {
   // 1. Matrices
   double memory_matrices =
-    mass_matrix.memory_consumption() +
-    stiffness_matrix.memory_consumption() +
-    lhs_matrix.memory_consumption() +
-    rhs_matrix.memory_consumption();
+      mass_matrix.memory_consumption() +
+      stiffness_matrix.memory_consumption() +
+      lhs_matrix.memory_consumption() +
+      rhs_matrix.memory_consumption();
 
   // 2. Vectors
   double memory_vectors =
-    system_rhs.memory_consumption() +
-    solution_owned.memory_consumption() +
-    solution.memory_consumption();
+      system_rhs.memory_consumption() +
+      solution_owned.memory_consumption() +
+      solution.memory_consumption();
 
   // 3. Grid + DoFHandler
   double memory_grid =
-    mesh.memory_consumption() +
-    dof_handler.memory_consumption();
+      mesh.memory_consumption() +
+      dof_handler.memory_consumption();
 
-  double local_memory  = memory_matrices + memory_vectors + memory_grid;
+  double local_memory = memory_matrices + memory_vectors + memory_grid;
   double global_memory = Utilities::MPI::sum(local_memory, MPI_COMM_WORLD);
 
   return global_memory / 1024.0 / 1024.0; // MB

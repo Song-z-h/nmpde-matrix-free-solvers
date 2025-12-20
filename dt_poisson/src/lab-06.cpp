@@ -48,7 +48,7 @@ void run_time_convergence(const RunConfig &config,
 
   for (double deltat : deltat_vals)
   {
-    Heat problem(N, "", degree, T, deltat, theta);
+    Heat problem(N, "", degree, T, deltat, theta, 1.0);
     problem.set_timer(timer);
 
     pcout << "===============================================" << std::endl;
@@ -159,11 +159,11 @@ int main(int argc, char *argv[])
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
   const unsigned int degree = 3;
-  const unsigned int N      = 10;
+  const unsigned int N      = 60;
   const double       T      = 1.0;
   const double       theta  = 1.0;
 
-   const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125, 0.00625, 0.003125};
+   const std::vector<double> deltat_vals = {0.1, 0.05, 0.025, 0.0125}; // 0.00625, 0.003125
 
   auto timer = std::make_shared<TimerOutput>(
     MPI_COMM_WORLD,

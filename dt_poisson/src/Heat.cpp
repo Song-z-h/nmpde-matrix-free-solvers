@@ -420,7 +420,7 @@ void Heat::solve_time_step()
 {
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
 
-  SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
+  SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
   TrilinosWrappers::PreconditionJacobi::AdditionalData jacobi_data;
   // (you can tweak jacobi_data.relaxation if you want; default is 1.0)
@@ -443,8 +443,8 @@ void Heat::solve_time_step()
 
   constraints.distribute(solution_owned);
 
-  pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
+  //pcout << "  " << solver_control.last_step() << " GMRES iterations " << std::endl;
+  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 
   solution = solution_owned;
 }

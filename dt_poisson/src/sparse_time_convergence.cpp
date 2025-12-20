@@ -33,7 +33,7 @@ int main(int argc, char *argv[])
   const double       T     = std::stod(argv[3]);
   const double       theta = std::stod(argv[4]);
 
-  const unsigned int degree = 2; // same polynomial degree as before
+  const unsigned int degree = 3; // same polynomial degree as before
 
   // ---------------------------------------------------------------------------
   // Shared TimerOutput (like in the MF code)
@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
   Timer setup_timer(MPI_COMM_WORLD);
   setup_timer.restart();
 
-  Heat problem(N, "", degree, T, dt, theta);
+  Heat problem(N, "", degree, T, dt, theta, 1.0);
   problem.set_timer(timer);
   problem.setup();
 

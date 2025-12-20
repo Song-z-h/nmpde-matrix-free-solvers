@@ -78,18 +78,20 @@ public:
       return 1.0;
     }
   };
-
-  // Function for the advection.
   class FunctionB : public Function<dim>
   {
   public:
+    FunctionB(const double beta0_in = 0.0)
+        : Function<dim>(), beta0(beta0_in)
+    {
+    }
+
     virtual double
     value(const Point<dim> &p,
           const unsigned int component = 0) const override
     {
       if (component == 0)
-        // return p[0] - 1.0;
-        return 0.0;
+        return beta0 * (p[0] - 1.0); // b_x = beta0 (x-1)
       else
         return 0.0;
     }
@@ -98,12 +100,12 @@ public:
     vector_value(const Point<dim> &p,
                  Vector<double> &values) const override
     {
-      for (unsigned int i = 1; i < dim; ++i)
-        values[i] = 0.0;
-
-      //values[0] = p[0] - 1.0;
-      values[0] = 0.0;
+      for (unsigned int d = 0; d < dim; ++d)
+        values[d] = value(p, d);
     }
+
+  private:
+    double beta0;
   };
 
   // coefficient for dirichlet boundary values
@@ -129,29 +131,53 @@ public:
     }
   };
 
-  // Function for the forcing term.
+  // Function for the forcing term: u_t - Δu + k u = f, with k = 1, μ = 1.
   class ForcingTerm : public Function<dim>
   {
   public:
+    explicit ForcingTerm(const double beta0_in = 0.0)
+        : Function<dim>(), beta0(beta0_in)
+    {
+    }
+
     virtual double
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      /* const double pi2 = M_PI / 2.0;
-       const double x = p[0];
-       const double t = get_time();
-       return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
-       */
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
       const double t = this->get_time();
+      const double G = std::sin(numbers::PI * t);
+      const double G_t = numbers::PI * std::cos(numbers::PI * t);
 
-      const double mu = 1.0; // must match DiffusionCoefficient
-      const double k = 1.0;  // must match ReactionCoefficient
+      const double k = 1.0;
+      const double beta = beta0;
 
-      return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t) + (mu * pi2 * pi2 + k) *
-                  std::sin(pi2 * x) * std::sin(pi2 * t);
+      // dim == 3 in this project
+      const double x = p[0];
+      const double y = p[1];
+      const double z = p[2];
+
+      const double two_pi = 2.0 * numbers::PI;
+      const double four_pi = 4.0 * numbers::PI;
+      const double three_pi = 3.0 * numbers::PI;
+
+      const double U =
+          std::sin(two_pi * x) *
+          std::sin(four_pi * y) *
+          std::sin(three_pi * z);
+
+      const double U_x =
+          two_pi * std::cos(two_pi * x) *
+          std::sin(four_pi * y) *
+          std::sin(three_pi * z);
+
+      const double lambda = 29.0 * numbers::PI * numbers::PI;
+
+      // same formula as in the MF code
+      return U * G_t + (lambda + k + beta) * U * G + beta * (x - 1.0) * U_x * G;
     }
+
+  private:
+    double beta0;
   };
 
   // Function for the initial condition.
@@ -188,40 +214,96 @@ public:
   class ExactSolution : public Function<dim>
   {
   public:
-    // Constructor.
-    ExactSolution()
-    {
-    }
-    // Evaluation.
+    ExactSolution() = default;
+
     virtual double
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      return sin(pi2 * x) * sin(pi2 * get_time());
+      const double t = this->get_time();
+      const double Gt = std::sin(M_PI * t);
+
+      if (dim == 1)
+      {
+        const double x = p[0];
+        const double U = std::sin(M_PI * x);
+        return U * Gt;
+      }
+      else if (dim == 2)
+      {
+        const double x = p[0];
+        const double y = p[1];
+        const double U =
+            std::sin(2.0 * M_PI * x) *
+            std::sin(4.0 * M_PI * y);
+        return U * Gt;
+      }
+      else if (dim == 3)
+      {
+        const double x = p[0];
+        const double y = p[1];
+        const double z = p[2];
+        const double U =
+            std::sin(2.0 * M_PI * x) *
+            std::sin(4.0 * M_PI * y) *
+            std::sin(3.0 * M_PI * z);
+        return U * Gt;
+      }
+
+      // Fallback (should not happen for dim=1,2,3)
+      return 0.0;
     }
 
-    // Gradient evaluation.
-    // deal.II requires this method to return a Tensor (not a double), i.e. a
-    // dim-dimensional vector. In our case, dim = 1, so that the Tensor will in
-    // practice contain a single number. Nonetheless, we need to return an
-    // object of type Tensor.
     virtual Tensor<1, dim>
     gradient(const Point<dim> &p,
              const unsigned int /*component*/ = 0) const override
     {
       Tensor<1, dim> result;
+      const double t = this->get_time();
+      const double Gt = std::sin(M_PI * t);
 
-      // Points 3 and 4.
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      result[0] = pi2 * cos(pi2 * x) * sin(pi2 * get_time());
+      if (dim == 1)
+      {
+        const double x = p[0];
+        result[0] = M_PI * std::cos(M_PI * x) * Gt;
+      }
+      else if (dim == 2)
+      {
+        const double x = p[0];
+        const double y = p[1];
+
+        result[0] =
+            2.0 * M_PI * std::cos(2.0 * M_PI * x) *
+            std::sin(4.0 * M_PI * y) * Gt;
+
+        result[1] =
+            4.0 * M_PI * std::sin(2.0 * M_PI * x) *
+            std::cos(4.0 * M_PI * y) * Gt;
+      }
+      else if (dim == 3)
+      {
+        const double x = p[0];
+        const double y = p[1];
+        const double z = p[2];
+
+        result[0] =
+            2.0 * M_PI * std::cos(2.0 * M_PI * x) *
+            std::sin(4.0 * M_PI * y) *
+            std::sin(3.0 * M_PI * z) * Gt;
+
+        result[1] =
+            4.0 * M_PI * std::sin(2.0 * M_PI * x) *
+            std::cos(4.0 * M_PI * y) *
+            std::sin(3.0 * M_PI * z) * Gt;
+
+        result[2] =
+            3.0 * M_PI * std::sin(2.0 * M_PI * x) *
+            std::sin(4.0 * M_PI * y) *
+            std::cos(3.0 * M_PI * z) * Gt;
+      }
 
       return result;
     }
-
-    // static constexpr double A = -4.0 / 15.0 * std::pow(0.5, 2.5);
   };
 
   // Constructor. We provide the final time, time step Delta t and theta method
@@ -231,8 +313,14 @@ public:
        const unsigned int &r_,
        const double &T_,
        const double &deltat_,
-       const double &theta_)
-      : N(N_), mesh_file_name(mesh_file_name_), r(r_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD)
+       const double &theta_,
+       const double beta0_)
+      : b(beta0_), forcing_term(beta0_), N(N_), mesh_file_name(mesh_file_name_), r(r_),
+        T(T_), deltat(deltat_), theta(theta_), time(0.0),
+        mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
+        mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
+        pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD),
+        beta0(beta0_)
   {
   }
 
@@ -394,7 +482,10 @@ protected:
 
   std::shared_ptr<TimerOutput> timer;
 
-  // NEW: high-level performance counters
+  // advection strength used by b and f
+  double beta0;
+
+  // high-level performance counters
   unsigned int n_time_steps = 0;
   unsigned long long total_gmres_iterations = 0;
   double total_linear_solve_time = 0.0; // [s]

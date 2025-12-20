@@ -170,10 +170,10 @@ void Heat::setup()
 
     MappingFE<dim> mapping_local(*fe);
     mf_storage = std::make_shared<MatrixFree<dim, NUMBER>>();
-    if (dim > 1)
-      mf_storage->reinit(mapping_local, dof_handler, constraints,
-                         QGaussSimplex<dim>(fe_degree + 1), additional_data);
-    if (dim == 1)
+    //if (dim > 1)
+      ///mf_storage->reinit(mapping_local, dof_handler, constraints,
+         //                QGaussSimplex<dim>(fe_degree + 1), additional_data);
+    //if (dim == 1)
       mf_storage->reinit(mapping_local, dof_handler, constraints,
                          QGauss<dim>(fe_degree + 1), additional_data);
 
@@ -304,7 +304,7 @@ void Heat::solve_time_step()
 {
   SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
   // SolverGMRES<VectorType> solver(solver_control);
-  SolverCG<VectorType> solver(solver_control);
+  SolverGMRES<VectorType> solver(solver_control);
 
   // Time the linear solve (global wall time)
   Timer linear_timer(MPI_COMM_WORLD);
@@ -334,8 +334,8 @@ void Heat::solve_time_step()
   total_linear_solve_time += this_solve_time;
   total_gmres_iterations += iters;
 
-  pcout << "  " << iters << " GMRES iterations " << std::endl;
-  pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
+  //pcout << "  " << iters << " GMRES iterations " << std::endl;
+  //pcout << "  " << solver_control.last_value() << " GMRES residual " << std::endl;
 }
 
 void Heat::output(const unsigned int &time_step) const
@@ -347,7 +347,7 @@ void Heat::output(const unsigned int &time_step) const
                             locally_relevant_dofs,
                             MPI_COMM_WORLD);
   solution_ghost = solution;
-  solution_ghost.update_ghost_values(); // FIXED: Update ghosts
+  solution_ghost.update_ghost_values(); 
 
   DataOut<dim> data_out;
   data_out.add_data_vector(dof_handler, solution_ghost, "u");

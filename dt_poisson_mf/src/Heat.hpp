@@ -107,36 +107,46 @@ public:
   };
 
   // Function for the B coefficient.
+template <int dim>
+class AdvectionCoefficient : public Function<dim>
+{
+public:
+  AdvectionCoefficient(const double beta0_in = 0.0)
+    : Function<dim>(), beta0(beta0_in)
+  {}
 
-  template <int dim>
-  class AdvectionCoefficient : public Function<dim>
+  virtual double
+  value(const Point<dim> &p,
+        const unsigned int component = 0) const override
   {
-  public:
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int component = 0) const override
-    {
-      return value<NUMBER>(p, component);
-    }
+    if (component == 0)
+      return beta0 * (p[0] - 1.0);  // b_x = beta0 (x-1)
+    else
+      return 0.0;
+  }
 
-    template <typename number>
-    number value(const Point<dim, number> &p,
-                 const unsigned int component = 0) const
-    {
-      const double beta0 = 0.0;
-      if (component == 0)
-        return beta0 * (p[0] - 1.0);
-      else
-        return 0.0;
-    }
-    virtual void
-    vector_value(const Point<dim> &p,
-                 Vector<double> &values) const override
-    {
-      for (unsigned int i = 0; i < dim; ++i)
-        values[i] = value<NUMBER>(p, i);
-    }
-  };
+  virtual void
+  vector_value(const Point<dim> &p,
+               Vector<double> &values) const override
+  {
+    for (unsigned int d = 0; d < dim; ++d)
+      values[d] = value<NUMBER>(p, d);
+  }
+
+  template <typename number>
+  number value(const Point<dim, number> &p,
+               const unsigned int component = 0) const
+  {
+    if (component == 0)
+      return number(beta0) * (p[0] - number(1.0));
+    else
+      return number(0.0);
+  }
+
+private:
+  double beta0;
+};
+
 
   // coefficient for dirichlet boundary values
   class FunctionBeta : public Function<dim>
@@ -163,51 +173,54 @@ public:
 
   // Function for the forcing term.
   class ForcingTerm : public Function<dim>
+{
+public:
+  explicit ForcingTerm(const double beta0_in = 0.0)
+    : Function<dim>(), beta0(beta0_in)
+  {}
+
+  virtual double
+  value(const Point<dim> &p,
+        const unsigned int /*component*/ = 0) const override
   {
-  public:
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int /*component*/ = 0) const override
-    {
-      // 2d
-      /*const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      const double t = get_time();
-      return pi2 * sin(pi2 * x) * cos(pi2 * t) + (pi2 * pi2 + 2.0) * sin(pi2 * x) * sin(pi2 * t) + pi2 * (x - 1.0) * cos(pi2 * x) * sin(pi2 * t);
-      */
+    const double t   = this->get_time();
+    const double G   = std::sin(numbers::PI * t);
+    const double G_t = numbers::PI * std::cos(numbers::PI * t);
 
-      // symmetric version
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      const double t = this->get_time();
+    const double k    = 1.0;
+    const double beta = beta0;
 
-      const double mu = 1.0; // must match DiffusionCoefficient
-      const double k = 1.0;  // must match ReactionCoefficient
+    // dim == 3 (your Heat::dim)
+    const double x = p[0];
+    const double y = p[1];
+    const double z = p[2];
 
-      return pi2 * std::sin(pi2 * x) * std::cos(pi2 * t) + (mu * pi2 * pi2 + k) *
-                                                               std::sin(pi2 * x) * std::sin(pi2 * t);
-      // 1d
-      /* const double pi2 = numbers::PI / 2.0;
-     const double x   = p[0];
-     const double t   = this->get_time();
+    const double two_pi   = 2.0 * numbers::PI;
+    const double four_pi  = 4.0 * numbers::PI;
+    const double three_pi = 3.0 * numbers::PI;
 
-     // Must match your coefficient classes:
-     const double eps   = 1e-3;   // DiffusionCoefficient
-     const double beta0 = 50.0;   // AdvectionCoefficient: beta0*(x-1)
-     const double k     = 0.0;    // ReactionCoefficient
+    const double U =
+      std::sin(two_pi * x) *
+      std::sin(four_pi * y) *
+      std::sin(three_pi * z);
 
-     return
-         // u_t
-         pi2 * std::sin(pi2 * x) * std::cos(pi2 * t)
-         // -eps u_xx + (beta0 + k) u
-       + (eps * pi2 * pi2 + beta0 + k)
-           * std::sin(pi2 * x) * std::sin(pi2 * t)
-         // beta0 (x-1) u_x
-       + beta0 * pi2 * (x - 1.0)
-           * std::cos(pi2 * x) * std::sin(pi2 * t);
-           */
-    }
-  };
+    const double U_x =
+      two_pi * std::cos(two_pi * x) *
+      std::sin(four_pi * y) *
+      std::sin(three_pi * z);
+
+    const double lambda = 29.0 * numbers::PI * numbers::PI;
+
+    // f = U G' + (λ + k + beta) U G + beta (x-1) U_x G
+    return U * G_t
+         + (lambda + k + beta) * U * G
+         + beta * (x - 1.0) * U_x * G;
+  }
+
+private:
+  double beta0;
+};
+
 
   // Function for the initial condition.
   class FunctionU0 : public Function<dim>
@@ -241,43 +254,65 @@ public:
 
   // Exact solution.
   class ExactSolution : public Function<dim>
+{
+public:
+  ExactSolution() = default;
+
+  virtual double
+  value(const Point<dim> &p,
+        const unsigned int /*component*/ = 0) const override
   {
-  public:
-    // Constructor.
-    ExactSolution()
-    {
-    }
-    // Evaluation.
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int /*component*/ = 0) const override
-    {
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      return sin(pi2 * x) * sin(pi2 * get_time());
-    }
+    const double t  = this->get_time();
+    const double Gt = std::sin(numbers::PI * t);
 
-    // Gradient evaluation.
-    // deal.II requires this method to return a Tensor (not a double), i.e. a
-    // dim-dimensional vector. In our case, dim = 1, so that the Tensor will in
-    // practice contain a single number. Nonetheless, we need to return an
-    // object of type Tensor.
-    virtual Tensor<1, dim>
-    gradient(const Point<dim> &p,
-             const unsigned int /*component*/ = 0) const override
-    {
-      Tensor<1, dim> result;
+    const double x = p[0];
+    const double y = p[1];
+    const double z = p[2];
 
-      // Points 3 and 4.
-      const double pi2 = M_PI / 2.0;
-      const double x = p[0];
-      result[0] = pi2 * cos(pi2 * x) * sin(pi2 * get_time());
+    const double u_spatial =
+      std::sin(2.0 * numbers::PI * x) *
+      std::sin(4.0 * numbers::PI * y) *
+      std::sin(3.0 * numbers::PI * z);
 
-      return result;
-    }
+    return u_spatial * Gt;
+  }
 
-    // static constexpr double A = -4.0 / 15.0 * std::pow(0.5, 2.5);
-  };
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> &p,
+           const unsigned int /*component*/ = 0) const override
+  {
+    Tensor<1, dim> result;
+
+    const double t  = this->get_time();
+    const double Gt = std::sin(numbers::PI * t);
+
+    const double x = p[0];
+    const double y = p[1];
+    const double z = p[2];
+
+    const double two_pi   = 2.0 * numbers::PI;
+    const double four_pi  = 4.0 * numbers::PI;
+    const double three_pi = 3.0 * numbers::PI;
+
+    result[0] =
+      two_pi * std::cos(two_pi * x) *
+      std::sin(four_pi * y) *
+      std::sin(three_pi * z) * Gt;
+
+    result[1] =
+      four_pi * std::sin(two_pi * x) *
+      std::cos(four_pi * y) *
+      std::sin(three_pi * z) * Gt;
+
+    result[2] =
+      three_pi * std::sin(two_pi * x) *
+      std::sin(four_pi * y) *
+      std::cos(three_pi * z) * Gt;
+
+    return result;
+  }
+};
+
 
   // Constructor. We provide the final time, time step Delta t and theta method
   // parameter as constructor arguments.
@@ -287,8 +322,14 @@ public:
        const double &T_,
        const double &deltat_,
        const double &theta_,
-       const PreconditionerType preconditioner_type_)
-      : N(N_), mesh_file_name(mesh_file_name_), T(T_), deltat(deltat_), theta(theta_), time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD), mf_operator_lhs(deltat, theta, true), mf_operator_rhs(deltat, theta, false), preconditioner_type(preconditioner_type_)
+       const PreconditionerType preconditioner_type_,
+       const double beta0_ = 0.0)
+      : b(beta0), forcing_term(beta0_), N(N_), mesh_file_name(mesh_file_name_), T(T_), deltat(deltat_), theta(theta_), 
+      time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), 
+      mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), 
+      pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD),
+       mf_operator_lhs(deltat, theta, true), mf_operator_rhs(deltat, theta, false),
+        preconditioner_type(preconditioner_type_), beta0(beta0_)
 
   {
   }
@@ -523,6 +564,7 @@ protected:
 
   // Problem definition. ///////////////////////////////////////////////////////
 
+
   // mu coefficient.
   DiffusionCoefficient<dim> mu;
 
@@ -638,6 +680,8 @@ protected:
 
   PreconditionerType preconditioner_type;
   typename MatrixFree<dim, NUMBER>::AdditionalData additional_data;
+
+    double beta0; // advection strength shared by b and f
 
 private:
   // --- High-level performance counters ---

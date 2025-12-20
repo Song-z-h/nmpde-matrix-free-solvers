@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
   // -----------------------------
   // Problem setup
   // -----------------------------
-  Heat problem(N, "", T, dt, theta, PreType::Jacobi);
+  Heat problem(N, "", T, dt, theta, PreType::Jacobi, 1.0);
   problem.set_timer(timer);
 
   Timer setup_timer(MPI_COMM_WORLD);

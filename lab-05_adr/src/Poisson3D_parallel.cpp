@@ -252,7 +252,7 @@ void Poisson3DParallelMf::solve()
   preconditioner.initialize(system_matrix, jacobi_data);
 
   pcout << "  Solving the linear system" << std::endl;
-  solver.solve(system_matrix, solution, system_rhs, preconditioner);
+  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
   constraints.distribute(solution);
 
     last_cg_iterations = solver_control.last_step();

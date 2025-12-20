@@ -46,7 +46,7 @@ convergence_file
     pcout << "Mesh refinement " << mesh_Ns[i] << std::endl;
 
     // 1. Create Problem
-    Poisson3DParallelMf problem(mesh_Ns[i], degree, 1000);
+    Poisson3DParallelMf problem(mesh_Ns[i], degree, 1.0);
 
     double setup_time, assemble_time, solve_time, output_time, error_time;
 

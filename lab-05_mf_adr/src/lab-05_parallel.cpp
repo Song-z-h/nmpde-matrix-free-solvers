@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
   {
     pcout << "Mesh size " << mesh_Ns[i] << std::endl;
 
-    Poisson3DParallelMf problem(mesh_Ns[i], 1000);
+    Poisson3DParallelMf problem(mesh_Ns[i], 1.0);
 
     double setup_time, assemble_time, solve_time, output_time, error_time;
 

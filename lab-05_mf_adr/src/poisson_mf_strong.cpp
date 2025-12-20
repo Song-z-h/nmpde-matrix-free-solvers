@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
     pcout << "-------------------------------------------------" << std::endl;
     pcout << "Mesh size N = " << N_current << std::endl;
 
-    Poisson3DParallelMf problem(N_current, 1000.0);
+    Poisson3DParallelMf problem(N_current, 1.0);
 
     double setup_time   = 0.0;
     double assemble_time= 0.0;

@@ -324,7 +324,7 @@ public:
        const double &theta_,
        const PreconditionerType preconditioner_type_,
        const double beta0_ = 0.0)
-      : b(beta0), forcing_term(beta0_), N(N_), mesh_file_name(mesh_file_name_), T(T_), deltat(deltat_), theta(theta_), 
+      : b(beta0_), forcing_term(beta0_), N(N_), mesh_file_name(mesh_file_name_), T(T_), deltat(deltat_), theta(theta_), 
       time(0.0), mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), 
       mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), 
       pcout(std::cout, mpi_rank == 0), mesh(MPI_COMM_WORLD),

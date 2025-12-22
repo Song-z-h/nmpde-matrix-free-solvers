@@ -69,7 +69,8 @@ int main(int argc, char *argv[])
   const double setup_time = setup_timer.wall_time();
 
   const double ndofs      = problem.get_number_of_dofs();
-  const double mem_MB     = problem.get_memory_consumption();
+  const double mem_MB = Utilities::MPI::sum(problem.get_process_rss_MB(), MPI_COMM_WORLD);
+
 
   // -----------------------------
   // Time stepping + linear solves

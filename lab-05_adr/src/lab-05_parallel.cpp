@@ -59,18 +59,16 @@ convergence_file
       setup_timer.stop();
     }
 
-    // ============================================================
-    // 3. MEASURE MEMORY (NEW SECTION)
-    // ============================================================
-    // Note: You must have implemented get_memory_consumption() in Poisson3D_parallel.cpp
-    double precise_memory_mb = problem.get_memory_consumption(); 
+    // Memory
+    const double local_rss_mb = problem.get_process_rss_MB();
+    const double precise_memory_mb = Utilities::MPI::sum(local_rss_mb, MPI_COMM_WORLD);
+    const double max_rss_mb = Utilities::MPI::max(local_rss_mb, MPI_COMM_WORLD);
 
-    // Optional: Get System RSS for printout only
-    Utilities::System::MemoryStats stats;
-    Utilities::System::get_memory_stats(stats);
-    
-    pcout << "  > Precise Memory: " << precise_memory_mb << " MB" << std::endl;
-    // ============================================================
+    if (mpi_rank == 0)
+    {
+      std::cout << "  > Peak RSS (max per rank): " << max_rss_mb << " MB\n";
+      std::cout << "  > Peak RSS (sum over ranks): " << precise_memory_mb << " MB\n";
+    }
 
     {
       TimerOutput::Scope t(timer, "Assemble");

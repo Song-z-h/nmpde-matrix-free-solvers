@@ -584,6 +584,14 @@ private:
   double get_memory_consumption() const;
 
   // --- HPC metrics helpers ---
+
+  double get_process_rss_MB()
+{
+  Utilities::System::MemoryStats stats;
+  Utilities::System::get_memory_stats(stats);
+  return stats.VmHWM / 1024.0; // MB for this rank
+}
+
   unsigned int
   get_last_cg_iterations() const
   {

@@ -88,13 +88,16 @@ int main(int argc, char *argv[])
     }
 
     // Memory
-    const double precise_memory_mb = problem.get_memory_consumption();
-    Utilities::System::MemoryStats stats;
-    Utilities::System::get_memory_stats(stats);
+   // Memory
+    const double local_rss_mb = problem.get_process_rss_MB();
+    const double precise_memory_mb = Utilities::MPI::sum(local_rss_mb, MPI_COMM_WORLD);
+    const double max_rss_mb = Utilities::MPI::max(local_rss_mb, MPI_COMM_WORLD);
 
-    pcout << "  > Precise Memory (mat + vecs): " << precise_memory_mb << " MB" << std::endl;
-    pcout << "  > System Peak RSS:            " << stats.VmHWM / 1024.0 << " MB" << std::endl;
-
+    if (mpi_rank == 0)
+    {
+      std::cout << "  > Peak RSS (max per rank): " << max_rss_mb << " MB\n";
+      std::cout << "  > Peak RSS (sum over ranks): " << precise_memory_mb << " MB\n";
+    }
     // Assemble
     {
       TimerOutput::Scope t(timer, "Assemble");

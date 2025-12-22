@@ -61,7 +61,8 @@ int main(int argc, char *argv[])
   const double setup_time = setup_timer.wall_time();
 
   const double ndofs            = problem.get_number_of_dofs();
-  const double precise_memory_mb = problem.get_memory_consumption();
+  const double precise_memory_mb = Utilities::MPI::sum(problem.get_process_rss_MB(), MPI_COMM_WORLD);
+
 
   pcout << "  > Precise Memory (Sparse + Vecs): "
         << precise_memory_mb << " MB\n";

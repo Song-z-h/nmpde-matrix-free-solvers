@@ -636,7 +636,7 @@ double Heat::compute_error(const VectorTools::NormType &norm_type)
                                                  locally_relevant_dofs,
                                                  MPI_COMM_WORLD);
   ghosted_solution = solution;
-  // ghosted_solution.update_ghost_values(); // optional with Trilinos
+  ghosted_solution.update_ghost_values(); // optional with Trilinos
 
   // Use a simple mapping (linear) for error computation
   FE_Q<dim>    fe_linear(1);

@@ -70,11 +70,10 @@ def main():
     assemble_mat = extract_series(ps_mat, mat, "assemble_time")
     
     # Attempt to extract total_time (if it exists in CSV), else sum components
-    if "total_time" in mf[ps_mf[0]]:
+    if ps_mf and "total_time" in mf[ps_mf[0]]:
         total_mf = extract_series(ps_mf, mf, "total_time")
         total_mat = extract_series(ps_mat, mat, "total_time")
     else:
-        # Fallback approximation
         print("Note: 'total_time' column not found, omitting from plot.")
         total_mf = []
         total_mat = []
@@ -119,7 +118,7 @@ def main():
     # 3. Generate Plots
     # -----------------------------
     
-    def save_plot(filename, title, ylabel, log_x=True, log_y=True):
+    def save_plot(filename, title, ylabel, log_y=True):
         plt.xlabel("Number of MPI processes")
         plt.ylabel(ylabel)
         plt.title(title)
@@ -127,19 +126,20 @@ def main():
         plt.legend()
         plt.tight_layout()
         
-        # Strong scaling usually spans orders of magnitude in P
-        if log_x:
-            plt.xscale("log") 
-            # Force ticks to be integers for clarity if needed, or let matplotlib handle it
-            
+        # Enforce linear X scale as requested
+        plt.xscale("linear")
+        
+        # Conditional Y scale
         if log_y:
             plt.yscale("log")
+        else:
+            plt.yscale("linear")
             
         plt.savefig(filename, dpi=200)
         print(f"Saved {filename}")
         plt.close()
 
-    # --- Plot 1: Detailed Times ---
+    # --- Plot 1: Detailed Times (Log Y, Linear X) ---
     plt.figure(figsize=(8, 6))
     if ps_mf:
         plt.plot(ps_mf, solve_mf, "o-", label="MF Solve", color="tab:blue")
@@ -151,9 +151,9 @@ def main():
         plt.plot(ps_mat, assemble_mat, "s--", label="MAT Assemble", color="tab:red")
         if total_mat:
             plt.plot(ps_mat, total_mat, "s:", label="MAT Total", color="tab:orange", alpha=0.5)
-    save_plot("strong_scaling_times.png", "Strong Scaling: Execution Times", "Time [s]")
+    save_plot("strong_scaling_times.png", "Strong Scaling: Execution Times", "Time [s]", log_y=True)
 
-    # --- Plot 2: Speedup (Solve) ---
+    # --- Plot 2: Speedup (Linear Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, S_mf, "o-", label="MF Speedup")
@@ -165,36 +165,36 @@ def main():
     if all_ps:
         plt.plot(all_ps, all_ps, "k--", alpha=0.5, label="Ideal (Linear)")
         
-    save_plot("strong_scaling_speedup.png", "Strong Scaling: Speedup (Solve Phase)", "Speedup (T1/Tp)")
+    save_plot("strong_scaling_speedup.png", "Strong Scaling: Speedup (Solve Phase)", "Speedup (T1/Tp)", log_y=False)
 
-    # --- Plot 3: Efficiency (Solve) ---
+    # --- Plot 3: Efficiency (Linear Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, E_mf, "o-", label="MF Efficiency")
     if ps_mat:
         plt.plot(ps_mat, E_mat, "s-", label="MAT Efficiency")
-    # Ideal efficiency is 1.0
     plt.axhline(1.0, color="k", linestyle="--", alpha=0.5, label="Ideal")
     
     save_plot("strong_scaling_efficiency.png", "Strong Scaling: Efficiency (Solve Phase)", "Efficiency", log_y=False)
 
-    # --- Plot 4: Throughput (DoFs/s) ---
+    # --- Plot 4: Throughput (Log Y, Linear X) ---
+    # DoFs/s often spans orders of magnitude, so Log Y is usually best
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, mdofs_mf, "o-", label="MF")
     if ps_mat:
         plt.plot(ps_mat, mdofs_mat, "s-", label="MAT")
-    save_plot("strong_scaling_throughput.png", "Strong Scaling: Throughput", "Million DoFs/s")
+    save_plot("strong_scaling_throughput.png", "Strong Scaling: Throughput", "Million DoFs/s", log_y=True)
 
-    # --- Plot 5: Memory Usage ---
+    # --- Plot 5: Memory Usage (Linear Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, mem_mf, "o-", label="MF Memory")
     if ps_mat:
         plt.plot(ps_mat, mem_mat, "s-", label="MAT Memory")
-    save_plot("strong_scaling_memory.png", "Strong Scaling: Total Memory Usage", "Memory [MB]")
+    save_plot("strong_scaling_memory.png", "Strong Scaling: Total Memory Usage", "Memory [MB]", log_y=False)
 
-    # --- Plot 6: GMRES Iterations ---
+    # --- Plot 6: GMRES Iterations (Linear Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, iters_mf, "o-", label="MF Iterations")
@@ -202,21 +202,21 @@ def main():
         plt.plot(ps_mat, iters_mat, "s-", label="MAT Iterations")
     save_plot("strong_scaling_iters.png", "Strong Scaling: Solver Iterations", "GMRES Iterations", log_y=False)
 
-    # --- Plot 7: Accuracy (L2 Error) ---
+    # --- Plot 7: Accuracy (Log Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, err_mf, "o-", label="MF L2 Error")
     if ps_mat:
         plt.plot(ps_mat, err_mat, "s-", label="MAT L2 Error")
-    save_plot("strong_scaling_error.png", "Strong Scaling: L2 Error", "L2 Norm Error")
+    save_plot("strong_scaling_error.png", "Strong Scaling: L2 Error", "L2 Norm Error", log_y=True)
 
-    # --- Plot 8: Problem Size (Sanity Check) ---
+    # --- Plot 8: Problem Size (Linear Y, Linear X) ---
     plt.figure(figsize=(7, 5))
     if ps_mf:
         plt.plot(ps_mf, ndofs_mf, "o-", label="MF DoFs")
     if ps_mat:
         plt.plot(ps_mat, ndofs_mat, "s-", label="MAT DoFs")
-    save_plot("strong_scaling_size.png", "Strong Scaling: Problem Size (Should be constant)", "Total DoFs")
+    save_plot("strong_scaling_size.png", "Strong Scaling: Problem Size", "Total DoFs", log_y=False)
 
 if __name__ == "__main__":
     main()

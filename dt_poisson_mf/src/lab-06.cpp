@@ -152,7 +152,7 @@ int main(int argc, char *argv[])
 
   const unsigned int N = 60;
   const double T = 1.0;
-  const double theta = 1.0;
+  const double theta = 0.5;
 
   auto timer = std::make_shared<TimerOutput>(
     MPI_COMM_WORLD,

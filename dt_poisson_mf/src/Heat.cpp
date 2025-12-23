@@ -77,38 +77,6 @@ void Heat::setup()
   {
     pcout << "Initializing the finite element space" << std::endl;
 
-    // 2 3 D
-    // fe = std::make_unique<FE_SimplexP<dim>>(r);
-
-    // 1D
-    // fe = std::make_unique<FE_Q<dim>>(r);
-
-    /*if (dim > 1)
-    {
-      fe = std::make_unique<FE_SimplexP<dim>>(fe_degree);
-      // Construct the quadrature formula of the appopriate degree of exactness.
-      quadrature = std::make_unique<QGaussSimplex<dim>>(fe_degree + 1);
-      quadrature_boundary = std::make_unique<QGaussSimplex<dim - 1>>(fe_degree + 1);
-    }
-    else
-    {
-      fe = std::make_unique<FE_Q<dim>>(fe_degree);
-      quadrature = std::make_unique<QGauss<dim>>(fe_degree + 1);
-      quadrature_boundary = std::make_unique<QGauss<dim - 1>>(fe_degree + 1);
-    }
-
-    pcout << "  Degree                     = " << fe->degree << std::endl;
-    pcout << "  DoFs per cell              = " << fe->dofs_per_cell
-          << std::endl;
-    // 2 3 D
-    // quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-    // 1D
-
-    pcout << "  Quadrature points per cell = " << quadrature->size()
-          << std::endl;*/
-
-    pcout << "Initializing the finite element space" << std::endl;
-
     // Hypercube + FE_Q, exactly like the Poisson code
     fe = std::make_unique<FE_Q<dim>>(fe_degree);
     quadrature = std::make_unique<QGauss<dim>>(fe_degree + 1);
@@ -443,70 +411,6 @@ void Heat::solve()
   }
 }
 
-/*
-double
-Heat::compute_error(const VectorTools::NormType &norm_type)
-{
-  // The error is an integral, and we approximate that integral using a
-  // quadrature formula. To make sure we are accurate enough, we use a
-  // quadrature formula with one node more than what we used in assembly.
-
-  FE_SimplexP<dim> fe_linear(1);
-  MappingFE mapping(fe_linear);
-
-  exact_solution.set_time(time);
-  // First we compute the norm on each element, and store it in a vector.
-  Vector<double> error_per_cell;
-
-  VectorType ghosted_solution(locally_owned_dofs,
-                              locally_relevant_dofs,
-                              MPI_COMM_WORLD);
-  ghosted_solution = solution;
-  ghosted_solution.update_ghost_values();
-
-  // Use a unique_ptr to hold the correct quadrature rule.
-  std::unique_ptr<Quadrature<dim>> quadrature_error;
-
-  if (dim > 1)
-  {
-    // For 2D/3D simplex meshes, use QGaussSimplex.
-    quadrature_error = std::make_unique<QGaussSimplex<dim>>(fe_degree + 3);
-  }
-  else
-  {
-    // For 1D, use QGauss.
-    quadrature_error = std::make_unique<QGauss<dim>>(fe_degree + 3);
-  }
-
-  exact_solution.set_time(time);
-  // For simplex meshes (dim > 1), you need to provide a mapping.
-  if (dim > 1)
-  {
-    // A simple linear mapping is usually sufficient for error computation.
-    MappingFE<dim> mapping(FE_SimplexP<dim>(1));
-    VectorTools::integrate_difference(mapping,
-                                      dof_handler,
-                                      ghosted_solution,
-                                      exact_solution,
-                                      error_per_cell,
-                                      *quadrature_error, // Dereference the pointer
-                                      norm_type);
-  }
-  else
-  {
-    VectorTools::integrate_difference(dof_handler,
-                                      ghosted_solution,
-                                      exact_solution,
-                                      error_per_cell,
-                                      *quadrature_error, // Dereference the pointer
-                                      norm_type);
-  }
-  // Then, we add out all the cells.
-  const double error =
-      VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
-
-  return error;
-}*/
 
 double Heat::compute_error(const VectorTools::NormType &norm_type)
 {

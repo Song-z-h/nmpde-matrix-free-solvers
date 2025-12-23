@@ -2,46 +2,6 @@
 
 void Heat::setup()
 {
-  /* pcout << "Initializing the mesh" << std::endl;
-
-   Triangulation<dim> serial_hypercube_tria;
-   GridGenerator::subdivided_hyper_cube(serial_hypercube_tria, N, 0.0, 1.0, true);
-
-    pcout << "  Number of elements in serial mesh = "
-         << serial_hypercube_tria.n_active_cells() << std::endl;
-
-   Triangulation<dim> serial_simplex_tria;
-   if (dim == 1)
-   {
-     // In 1D, no conversion needed (intervals are simplices).
-     serial_simplex_tria.copy_triangulation(serial_hypercube_tria);
-   }
-   else
-   {
-     // Convert to simplices for dim > 1. Use minimal divisions (2 in 2D, 6 in 3D) for coarser mesh.
-     //const unsigned int n_divisions = (dim == 2 ? 2 : 6);
-     GridGenerator::convert_hypercube_to_simplex_mesh(serial_hypercube_tria,
-                                                      serial_simplex_tria);
-   }
-
-
-   // Distribute for parallel.
-   GridTools::partition_triangulation(mpi_size, serial_simplex_tria);
-   const auto construction_data =
-       TriangulationDescription::Utilities::create_description_from_triangulation(serial_simplex_tria, MPI_COMM_WORLD);
-   mesh.create_triangulation(construction_data);
-
-   pcout << "  Number of elements in distributed mesh = " << mesh.n_global_active_cells() << std::endl;
-
-   // Optional: Save the generated mesh to a file for visualization (e.g., VTK).
-   if (mpi_rank == 0)
-   {
-     const std::string mesh_file_name = "mesh-" + std::to_string(N + 1) + ".vtk";
-     GridOut grid_out;
-     std::ofstream grid_out_file(mesh_file_name);
-     grid_out.write_vtk(serial_simplex_tria, grid_out_file);
-     pcout << "  Mesh saved to " << mesh_file_name << std::endl;
-   }*/
   pcout << "Initializing the mesh" << std::endl;
 
   Triangulation<dim> serial_tria;
@@ -78,30 +38,7 @@ void Heat::setup()
   {
     pcout << "Initializing the finite element space" << std::endl;
 
-    // 2 3 D
-    // fe = std::make_unique<FE_SimplexP<dim>>(r);
-
-    // 1D
-    // fe = std::make_unique<FE_Q<dim>>(r);
-
-    /*if (dim > 1)
-    {
-      fe = std::make_unique<FE_SimplexP<dim>>(r);
-      // Construct the quadrature formula of the appopriate degree of exactness.
-      quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
-      quadrature_boundary = std::make_unique<QGaussSimplex<dim - 1>>(r + 1);
-    }
-    else
-    {
-      fe = std::make_unique<FE_Q<dim>>(r);
-      quadrature = std::make_unique<QGauss<dim>>(r + 1);
-      quadrature_boundary = std::make_unique<QGauss<dim - 1>>(r + 1);
-    }
-
-    pcout << "  Degree                     = " << fe->degree << std::endl;
-    pcout << "  DoFs per cell              = " << fe->dofs_per_cell
-          << std::endl;
-    */
+    
     pcout << "Initializing the finite element space" << std::endl;
 
     // Hypercube + FE_Q, exactly like the Poisson code
@@ -218,8 +155,6 @@ void Heat::assemble_matrices()
       // Evaluate coefficients on this quadrature node.
       const double mu_loc = mu.value(fe_values.quadrature_point(q));
       const double k_loc = k.value(fe_values.quadrature_point(q));
-      // const double tau_loc = tau.value(fe_values.quadrature_point(q));
-      // const Tensor<1, dim> b_loc = b.value(fe_values.quadrature_point(q));
 
       Vector<double> b_loc(dim);
       // double b_value = b.value(fe_values.quadrature_point(q));
@@ -244,8 +179,8 @@ void Heat::assemble_matrices()
           // advection term
           cell_stiffness_matrix(i, j) -=
               scalar_product(advection_term_tensor,
-                             fe_values.shape_grad(i, q)) * // Gradient on test function phi_i
-              fe_values.shape_value(j, q) *                // Value of trial function phi_j
+                             fe_values.shape_grad(i, q)) * 
+              fe_values.shape_value(j, q) *                
               fe_values.JxW(q);
 
           // mid term
@@ -297,22 +232,6 @@ void Heat::assemble_matrices()
   rhs_matrix.copy_from(mass_matrix);
   rhs_matrix.add(-(1.0 - theta), stiffness_matrix);
 
-  // Boundary conditions.
-  {
-    // We construct a map that stores, for each DoF corresponding to a Dirichlet
-    // condition, the corresponding value. E.g., if the Dirichlet condition is
-    // u_i = b, the map will contain the pair (i, b).
-    // std::map<types::global_dof_index, double> boundary_values;
-
-    // This object represents our boundary data as a real-valued function (that
-    // always evaluates to zero).
-
-    // Finally, we modify the linear system to apply the boundary conditions.
-    // This replaces the equations for the boundary DoFs with the corresponding
-    // u_i = 0 equations.
-    // MatrixTools::apply_boundary_values(
-    //  boundary_values, lhs_matrix, solution, system_rhs, true);
-  }
 }
 
 void Heat::assemble_rhs(const double &time)
@@ -411,14 +330,11 @@ void Heat::assemble_rhs(const double &time)
   // Add the term that comes from the old solution.
   rhs_matrix.vmult_add(system_rhs, solution_owned);
 
-  /*for (const auto &entry : boundary_values)
-    if (system_rhs.in_local_range(entry.first))
-      system_rhs(entry.first) = entry.second;*/
 }
 
 void Heat::solve_time_step()
 {
-  SolverControl solver_control(500000, 1e-9 * system_rhs.l2_norm());
+  SolverControl solver_control(500000, 1e-12 * system_rhs.l2_norm());
 
   SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
@@ -555,70 +471,6 @@ void Heat::solve()
     }*/
   }
 }
-
-/*
-double
-Heat::compute_error(const VectorTools::NormType &norm_type)
-{
-  // The error is an integral, and we approximate that integral using a
-  // quadrature formula. To make sure we are accurate enough, we use a
-  // quadrature formula with one node more than what we used in assembly.
-
-  // FE_SimplexP<dim> fe_linear(1);
-  // MappingFE mapping(fe_linear);
-
-  exact_solution.set_time(time);
-  // First we compute the norm on each element, and store it in a vector.
-  Vector<double> error_per_cell;
-
-  TrilinosWrappers::MPI::Vector ghosted_solution(locally_owned_dofs,
-                                                 locally_relevant_dofs,
-                                                 MPI_COMM_WORLD);
-  ghosted_solution = solution;
-
-  // Use a unique_ptr to hold the correct quadrature rule.
-  std::unique_ptr<Quadrature<dim>> quadrature_error;
-
-  if (dim > 1)
-  {
-    // For 2D/3D simplex meshes, use QGaussSimplex.
-    quadrature_error = std::make_unique<QGaussSimplex<dim>>(r + 3);
-  }
-  else
-  {
-    // For 1D, use QGauss.
-    quadrature_error = std::make_unique<QGauss<dim>>(r + 3);
-  }
-
-  exact_solution.set_time(time);
-  // For simplex meshes (dim > 1), you need to provide a mapping.
-  if (dim > 1)
-  {
-    // A simple linear mapping is usually sufficient for error computation.
-    MappingFE<dim> mapping(FE_SimplexP<dim>(1));
-    VectorTools::integrate_difference(mapping,
-                                      dof_handler,
-                                      ghosted_solution,
-                                      exact_solution,
-                                      error_per_cell,
-                                      *quadrature_error, // Dereference the pointer
-                                      norm_type);
-  }
-  else
-  {
-    VectorTools::integrate_difference(dof_handler,
-                                      ghosted_solution,
-                                      exact_solution,
-                                      error_per_cell,
-                                      *quadrature_error, // Dereference the pointer
-                                      norm_type);
-  }
-  // Then, we add out all the cells.
-  const double error =
-      VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
-
-  return error;
-}*/
 
 double Heat::compute_error(const VectorTools::NormType &norm_type)
 {
